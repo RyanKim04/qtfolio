@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/* SPEC.md §14 design tokens (v2.1, owner-directed): Stripe-style light UI —
+   white cards, hairline borders, soft shadows, blurple accent. Green/red remain
+   reserved for P&L semantics. */
+@theme {
+  --color-bg: #f6f8fb; /* page background */
+  --color-panel: #ffffff; /* cards */
+  --color-border: #e3e8ee; /* hairlines */
+  --color-text: #1a1f36;
+  --color-muted: #6a7383;
+  --color-accent: #635bff; /* primary / interactive */
+  --color-accent-deep: #5147e8; /* hover on filled controls */
+  --color-accent-soft: #f0f1ff; /* selected / tint backgrounds */
+  --color-up: #17803d;
+  --color-down: #df1b41;
+  --color-capital: #8792a2;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every number, price, and table cell keeps tabular figures. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stripe-style card: white, hairline border, gentle radius + shadow. */
+.card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
