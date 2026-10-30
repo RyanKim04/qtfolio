@@ -13,7 +13,8 @@ import {
   YAxis,
 } from "recharts";
 import { useAttribution, useCompare, useHealth, useHoldings, usePerfIndexed, usePerfStacked, usePerfValue, useRunJob, useSettingsData } from "../api/hooks";
-import type { PerfStats, PerfValueSeries, RangeKey } from "../api/types";
+import type { PerfStats, PerfValueSeries, RangeKey, StatDay } from "../api/types";
+import { DayBreakdownPopover } from "../components/DayBreakdown";
 import { COLORS, TOOLTIP_STYLE } from "../lib/palette";
 import { fmtMoney, fmtPct, fmtSignedMoney, pnlClass } from "../lib/format";
 
@@ -151,6 +152,15 @@ function ValueChart({ data, baseline }: { data: PerfValueSeries; baseline: "rang
         <span className="flex items-center gap-1.5">
           <svg width="10" height="8"><path d="M 5 0 L 9.5 8 L 0.5 8 Z" fill="var(--color-accent)" /></svg>
           Deposit / withdrawal
+        </span>
+        <span
+          className="ml-auto flex items-center gap-2"
+          title="The P&L band, split by source: security gains + dividends valued currency-neutrally, vs the CAD effect of USD/CAD moving on your USD holdings."
+        >
+          <span>of which</span>
+          <span className={`num ${pnlClass(data.investment_pnl)}`}>Investment {fmtSignedMoney(data.investment_pnl, "CAD")}</span>
+          <span className="text-border">·</span>
+          <span className={`num ${pnlClass(data.fx_pnl)}`}>FX {fmtSignedMoney(data.fx_pnl, "CAD")}</span>
         </span>
       </div>
       <div className="min-h-0 flex-1">
@@ -326,7 +336,7 @@ function StructureChart({ range }: { range: RangeKey }) {
 }
 
 function StatsStrip({ stats }: { stats: PerfStats }) {
-  const items: { label: string; value: string; cls?: string }[] = [
+  const items: { label: string; value: string; cls?: string; day?: StatDay }[] = [
     { label: "TWR", value: fmtPct(stats.twr != null ? stats.twr * 100 : null), cls: pnlClass(stats.twr) },
     {
       label: stats.mwr_since ? `MWR since ${stats.mwr_since}` : "MWR",
@@ -338,20 +348,47 @@ function StatsStrip({ stats }: { stats: PerfStats }) {
     {
       label: `Best day${stats.best_day ? ` · ${stats.best_day.date}` : ""}`,
       value: fmtPct(stats.best_day ? stats.best_day.r * 100 : null), cls: "text-up",
+      day: stats.best_day ?? undefined,
     },
     {
       label: `Worst day${stats.worst_day ? ` · ${stats.worst_day.date}` : ""}`,
       value: fmtPct(stats.worst_day ? stats.worst_day.r * 100 : null), cls: "text-down",
+      day: stats.worst_day ?? undefined,
     },
   ];
   return (
     <div className="grid grid-cols-6 gap-2">
-      {items.map((it) => (
+      {items.map((it) => (it.day ? <DayStat key={it.label} {...it} day={it.day} /> : (
         <div key={it.label} className="card px-3 py-2">
           <div className="truncate text-[11px] font-medium uppercase tracking-wide text-muted" title={it.label}>{it.label}</div>
           <div className={`num mt-0.5 text-[15px] font-semibold ${it.cls ?? ""}`}>{it.value}</div>
         </div>
-      ))}
+      )))}
+    </div>
+  );
+}
+
+/** A Best/Worst day card: hover (or focus) opens that session's breakdown.
+ *  The popover sits inside the hover target so the pointer can move into it. */
+function DayStat({ label, value, cls, day }: { label: string; value: string; cls?: string; day: StatDay }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
+    >
+      <div tabIndex={0} className="card cursor-default px-3 py-2 outline-none hover:border-accent focus-visible:border-accent">
+        <div className="truncate text-[11px] font-medium uppercase tracking-wide text-muted underline decoration-dotted underline-offset-2" title={label}>{label}</div>
+        <div className={`num mt-0.5 text-[15px] font-semibold ${cls ?? ""}`}>{value}</div>
+      </div>
+      {open && (
+        <div className="absolute right-0 bottom-full z-30 pb-1">
+          <DayBreakdownPopover day={day} />
+        </div>
+      )}
     </div>
   );
 }
@@ -401,8 +438,8 @@ function AttributionTable({ range }: { range: RangeKey }) {
           )}
           {Math.abs(a.other) >= 1 && (
             <tr className="border-b border-border/50 text-muted">
-              <td className="px-2 py-1.5" title="FX conversion spread, unresolved activity rows, snapshot reconciliation">
-                FX & other
+              <td className="px-2 py-1.5" title="Snapshot reconciliation, conversion spread, and holdings approximated while this week's trades are not yet posted by Questrade — self-corrects when they post">
+                Reconciliation
               </td>
               <td className={td} colSpan={4}></td>
               <td className={`${td} ${pnlClass(a.other)}`}>{fmtSignedMoney(a.other, "CAD")}</td>
@@ -412,6 +449,18 @@ function AttributionTable({ range }: { range: RangeKey }) {
             <td className="px-2 py-1.5 font-medium">Total</td>
             <td className={td} colSpan={4}></td>
             <td className={`${td} font-semibold ${pnlClass(a.total_pnl)}`}>{fmtSignedMoney(a.total_pnl, "CAD")}</td>
+          </tr>
+          <tr className="border-t border-border">
+            <td
+              className="px-2 py-1.5 text-[11px] text-muted"
+              colSpan={6}
+              title="The same total, split by source: security gains + dividends valued currency-neutrally, vs the CAD effect of USD/CAD moving on your USD holdings."
+            >
+              of which — Investment{" "}
+              <span className={`num ${pnlClass(a.investment_pnl)}`}>{fmtSignedMoney(a.investment_pnl, "CAD")}</span>
+              {"  ·  FX (USD/CAD) "}
+              <span className={`num ${pnlClass(a.fx_pnl)}`}>{fmtSignedMoney(a.fx_pnl, "CAD")}</span>
+            </td>
           </tr>
         </tbody>
       </table>

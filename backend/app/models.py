@@ -37,10 +37,15 @@ class QtToken(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
+    # DECISION: the PK keeps its historical name; for Wealthsimple accounts it
+    # holds the WS account id (alphanumeric, not a QT number) — renaming would churn every query.
     qt_account_id: Mapped[str] = mapped_column(String, primary_key=True)
     type: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String)
     tracked: Mapped[bool] = mapped_column(default=True)
+    # questrade = live API account (snapshots are ground truth);
+    # wealthsimple = CSV ledger account (state derived from its activities).
+    broker: Mapped[str] = mapped_column(String, default="questrade", server_default="questrade")
 
 
 class Symbol(Base):
@@ -142,6 +147,9 @@ class SeriesDaily(Base):
     pnl_cad_cents: Mapped[int | None] = mapped_column(Integer)
     twr_index: Mapped[float | None] = mapped_column(Float)
     flows_cad_cents: Mapped[int | None] = mapped_column(Integer)
+    # Cumulative CAD gain/loss from USD/CAD moves on USD exposure (since inception).
+    # Investment P&L = pnl_cad_cents − fx_gain_cad_cents. See series.fx_translation_series.
+    fx_gain_cad_cents: Mapped[int | None] = mapped_column(Integer)
 
 
 class AnalystSnapshot(Base):
@@ -178,6 +186,19 @@ class JobRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String)  # running | success | error
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class TfsaTransaction(Base):
+    """Hand-entered TFSA room ledger (services/tfsa.py) — every institution the
+    owner has used, independent of the broker activities above."""
+    __tablename__ = "tfsa_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    institution: Mapped[str] = mapped_column(String)
+    type: Mapped[str] = mapped_column(String)  # contribution | withdrawal | transfer
+    amount_cad_cents: Mapped[int] = mapped_column(Integer)  # positive; `type` carries the direction
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 Index("ix_job_runs_name_started", JobRun.job_name, JobRun.started_at.desc())

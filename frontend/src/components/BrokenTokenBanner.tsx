@@ -4,7 +4,8 @@ import { useHealth } from "../api/hooks";
 export function BrokenTokenBanner() {
   const health = useHealth();
   const location = useLocation();
-  if (health.data?.token.status !== "broken") return null;
+  // A retired Questrade has no chain to keep alive — its expiry is expected.
+  if (health.data?.token.status !== "broken" || health.data?.questrade?.retired) return null;
   return (
     <div className="border-b border-down/40 bg-down/10 px-4 py-2 text-[13px]">
       <span className="font-medium text-down">Questrade token chain is broken.</span>{" "}

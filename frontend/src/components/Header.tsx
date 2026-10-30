@@ -14,9 +14,10 @@ export function Header() {
   const summary = useSummary(currency);
   const health = useHealth();
 
-  const token = health.data?.token.status;
+  const retired = Boolean(health.data?.questrade?.retired);
+  const token = retired ? "retired" : health.data?.token.status;
   const jobsOk = health.data?.jobs.every((j) => !j.last_run || j.last_run.status !== "error") ?? true;
-  const dot = token === "broken" ? "err" : token === "ok" && jobsOk ? "ok" : "warn";
+  const dot = token === "broken" ? "err" : (token === "ok" || retired) && jobsOk ? "ok" : "warn";
 
   const s = summary.data;
   return (
@@ -47,7 +48,7 @@ export function Header() {
         </div>
         <span
           className={`h-2 w-2 rounded-full ${syncDot(dot)}`}
-          title={`token: ${token ?? "…"}${jobsOk ? "" : " · a job failed — see Settings"}`}
+          title={`${retired ? "Questrade retired" : `token: ${token ?? "…"}`}${jobsOk ? "" : " · a job failed — see Settings"}`}
         />
       </div>
     </header>

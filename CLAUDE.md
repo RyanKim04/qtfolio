@@ -18,15 +18,39 @@ Local, single-user, read-only Questrade portfolio terminal. **The authoritative 
   pandas-verified. Any ticker works read-only via symbol search.
 - **M4 REPLACED (2026-08-13, owner decision): the entire news/sentiment stack was deleted**
   (News page, Finnhub/AV/yfinance news adapters, FinBERT/torch, attention spikes, news_items/
-  reddit_posts tables). In its place: **AI Analyst on the Dashboard** — Claude Fable 5
-  (`claude-fable-5`, Anthropic API, web_search_20260209 server tool, SSE streaming, Opus 4.8
-  refusal fallback) in `backend/app/ai/` + `api/ai.py` + `frontend/src/components/AiAnalyst.tsx`.
-  Run-analysis briefing (researches earnings/Fed/macro dates live) + grounded chat, both fed the
-  live portfolio context (`ai/context.py`) and the owner's investor profile (settings key
-  `investor_profile`, editable in Settings; default: aggressive tech, small-seed philosophy,
-  sustainable aggression). NO advisory disclaimers — owner's explicit rule, enforced in the
-  system prompt. Needs ANTHROPIC_API_KEY in .env. Last analysis persisted in settings
-  (`ai_last_analysis`). Owner plans a Performance-tab agent later; prediction modeling still last.
+  reddit_posts tables). The AI Analyst that replaced it was **itself removed (2026-10-29, owner
+  decision)**: no `ai/` package, `/api/ai/*`, Dashboard panel, investor-profile editor or `anthropic`
+  dependency. Stale `investor_profile` / `ai_last_analysis` settings rows are inert. Prediction
+  modeling is still last.
+- **BROKER MOVE (2026-10-27): owner moved the TFSA from Questrade to Wealthsimple (in-kind, 10/19).**
+  Questrade is **retired** (`settings.qt_retired`; closing zero snapshot taken 10/27): token refresh,
+  QT sync jobs and the broken-token banner stand down; its history (2024-05-20 → 10/26) stays in every
+  series. Wealthsimple has no API — owner chose the **official activities CSV** over unofficial GraphQL
+  clients (no trading-capable token stored). `services/wealthsimple.py` parses it (auto-detected by
+  `/import/activities`); WS accounts are `accounts.broker = 'wealthsimple'` **ledger accounts** whose
+  state is derived from their full-life activities (`reconstruction.LedgerState`), composed with QT
+  snapshot accounts in `history.recompute`. Broker-to-broker transfer legs are matched and made
+  internal (`match_transfers`: zero flow, same day). Dashboard/stock position now come from the
+  reconstructed book (`services/book.py`, average cost across both brokers) + **yfinance** for all
+  market data (quotes, OHLC under the legacy interval names, symbol resolution) — no Questrade on any
+  live path. WS export quirks: CAD symbols get QT's `.TO` suffix (WS `GOOG`/CAD = the CDR = `GOOG.TO`);
+  `SecurityTransfer.net_cash_amount` is book value, not cash; `Dividend.quantity` repeats the cash amount.
+  Live quotes include **extended hours** (`YfService.quotes`: newest post/pre-market trade after the
+  regular close wins; TSX has none), and the Performance charts' **today point is live** (dashboard
+  total, `performance._series_maps`) — stored `series_daily` stays close-based.
+  Live prices come from Yahoo's **streamer WebSocket** (`YfService.stream_forever`, ~1–3 s lag;
+  the polled quoteSummary lags 1–2 min and can freeze on a symbol for 20+ min — learned 2026-10-30).
+  Polled quotes (15 s inside 04:00–20:00 ET weekdays, 5 min otherwise) remain the fallback and the
+  prev-close baseline; the newest of tick vs poll wins. Dashboard polls at 5 s, Performance at 30 s.
+- **TFSA room tracker (2026-10-29)**: `services/tfsa.py` (pure engine) + `api/tfsa.py` + Dashboard
+  `components/TfsaRoom.tsx` + Settings panel. Hand-entered `tfsa_transactions` across every institution
+  (type `transfer` = TFSA→TFSA, no room effect; NOT derived from broker activities). Room walks forward
+  from the CRA-confirmed Jan 1 anchor (settings `tfsa_anchor` — kept in the DB only, not in code/git);
+  limits in `tfsa_annual_limits` (null = not announced → projection borrows the last known limit,
+  flagged). Recording previews warnings first (over-contribution, same-year re-contribution);
+  March+ reminder to re-anchor on CRA's new figure. `test_tfsa.py` covers the engine on a synthetic
+  history; the owner's real history (reproducing CRA's confirmed room) is in the gitignored
+  `test_tfsa_private.py`.
 - M5 (analyst/polish): not started.
 - Design: Stripe-style light theme (SPEC.md §14 v2.1) — white cards, Inter, blurple accent.
 
@@ -52,6 +76,9 @@ Local, single-user, read-only Questrade portfolio terminal. **The authoritative 
   token** → any 400 from the exchange = chain lost = broken banner (learned 2026-08-14). The
   startup refresh skips if the chain rotated <30 min ago — uvicorn --reload restarts once burned
   the chain by killing an in-flight exchange during rapid dev edits.
+- **The GitHub repo is PUBLIC.** Never commit real financial data — balances, contribution/trade
+  history, CRA room, account ids, exports. Tests use synthetic numbers; anything real goes in a
+  gitignored `*_private.*` file or `private/` dir (e.g. `test_tfsa_private.py`), the DB, or `misc/`.
 - Server binds 127.0.0.1 only. No advisory disclaimers anywhere in the UI.
 - Migrations via Alembic; `alembic upgrade head` runs automatically at backend startup.
 
@@ -62,4 +89,4 @@ Local, single-user, read-only Questrade portfolio terminal. **The authoritative 
 3. Questrade API Centre → generate a manual refresh token → paste it in Settings.
 4. Pick tracked accounts. (Step 3 of onboarding, bootstrap backfill, arrives in M2.)
 
-`.env` (repo root) holds Finnhub/Reddit keys — unused until M4; see `.env.example`.
+`.env` (repo root) is optional — no API keys are needed.

@@ -120,18 +120,33 @@ def normalize_api_row(account_id: str, raw: dict) -> dict:
     }
 
 
+def _is_dividend_row(row: dict) -> bool:
+    """Dividend / DRIP income. Questrade returns the SAME payment under a clean
+    ticker or an internal registry key (e.g. QQQM vs H082968, TQQQ vs P025429)
+    with cosmetically different descriptions and a sometimes-missing trade_date —
+    so keeping the symbol in the dedup key lets one dividend land twice (learned
+    2026-09-21: QQQM/TQQQ dividends double-counted after a post-API-key re-sync)."""
+    t = (row.get("type") or "").lower()
+    return "dividend" in t or t == "div" or "drip" in t
+
+
 def tuple_key(row: dict) -> tuple:
     """Typed-field identity for dedup. Description deliberately excluded (see
     module doc). Date basis = trade_date when present, else transaction_date:
     the API posts trades at T+1 (transactionDate) while the web export stamps
-    the trade day itself — the same fill must produce the same key from both."""
+    the trade day itself — the same fill must produce the same key from both.
+    Dividends dedup symbol-free (account+date+amount+currency identifies the cash
+    event); the symbol is unreliable and would defeat cross-symbol dedup. Two real
+    same-day same-amount dividends from different stocks still survive via distinct
+    occurrence indices."""
     effective = row.get("trade_date") or row.get("transaction_date")
+    ticker = "" if _is_dividend_row(row) else (row["ticker"] or "")
     return (
         row["account_id"],
         effective.isoformat() if effective else "",
         row["type"],
         row["action"],
-        row["ticker"] or "",
+        ticker,
         row["qty_micro"] or 0,
         row["price_micro"] or 0,
         row["gross_amount_cents"] or 0,
@@ -195,6 +210,60 @@ async def rehash_all(sessions: async_sessionmaker) -> int:
         await session.commit()
     log.info("rehashed %d activity rows", len(changed))
     return len(changed)
+
+
+def _dividend_ticker_rank(ticker: str) -> tuple:
+    """Survivor rank among duplicate dividend rows — LOWER is cleaner. A plain
+    ticker (QQQM, TQQQ, TD) beats a registry key (H082968, P025429) or a mangled
+    leading-dot symbol (.TD)."""
+    t = ticker or ""
+    registry = bool(re.fullmatch(r"[A-Z]\d{5,}", t))  # Questrade internal key
+    return (registry, t.startswith("."), t == "", len(t), t)
+
+
+async def collapse_duplicate_dividends(sessions: async_sessionmaker) -> int:
+    """Remove duplicate dividend rows Questrade returned under BOTH a clean ticker
+    and an internal registry key (same account+effective-date+action+amount+
+    currency) — keeping the cleanest-symbol row. Self-healing repair for data
+    ingested before the symbol-free dividend dedup key; new syncs no longer create
+    these (see tuple_key). Also strips mangled leading-dot dividend tickers
+    (.TD -> TD) so the payment rolls into the real position's row."""
+    from collections import defaultdict
+
+    async with sessions() as session:
+        rows = list((await session.execute(select(Activity))).scalars())
+        groups: dict[tuple, list] = defaultdict(list)
+        for r in rows:
+            if not _is_dividend_row(_row_dict(r)):
+                continue
+            eff = r.trade_date or r.transaction_date
+            # Group on the cash event AND the normalized description. Requiring the
+            # description to match (whitespace-collapsed) guarantees we only merge the
+            # SAME payment recorded under two symbols — never two different stocks that
+            # happen to pay the same amount on the same day.
+            desc = re.sub(r"\s+", " ", (r.description or "")).strip().upper()
+            groups[(r.account_id, eff, r.action or "", r.net_amount_cents or 0, r.currency or "", desc)].append(r)
+        removed = 0
+        survivors = []
+        for grp in groups.values():
+            grp.sort(key=lambda r: _dividend_ticker_rank(r.ticker or ""))
+            for dupe in grp[1:]:
+                await session.delete(dupe)
+                removed += 1
+                log.info("collapsed duplicate dividend %s -> kept %s (%s %s %.2f %s)",
+                         dupe.ticker, grp[0].ticker, dupe.account_id,
+                         (dupe.trade_date or dupe.transaction_date), (dupe.net_amount_cents or 0) / 100, dupe.currency)
+            survivors.append(grp[0])
+        fixed_dot = 0
+        for r in survivors:  # normalize the kept row's mangled symbol
+            if r.ticker and r.ticker.startswith("."):
+                r.ticker = r.ticker.lstrip(".")
+                fixed_dot += 1
+        if removed or fixed_dot:
+            await session.commit()
+    if removed or fixed_dot:
+        log.info("dividend cleanup: %d duplicates removed, %d mangled tickers fixed", removed, fixed_dot)
+    return removed + fixed_dot
 
 
 async def upsert_activities(sessions: async_sessionmaker, rows: list[dict]) -> int:

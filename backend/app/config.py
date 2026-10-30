@@ -16,8 +16,6 @@ TZ = ZoneInfo("America/Toronto")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(REPO_ROOT / ".env"), extra="ignore")
 
-    anthropic_api_key: str = ""
-
     db_path: Path = DATA_DIR / "qtfolio.db"
     token_backup_path: Path = DATA_DIR / "qt_token_backup.json"
 

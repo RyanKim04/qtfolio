@@ -23,7 +23,10 @@ class AccountTracking(BaseModel):
 async def _accounts_payload(state) -> list[dict]:
     async with state.sessions() as session:
         rows = (await session.execute(select(Account))).scalars().all()
-    return [{"qt_account_id": a.qt_account_id, "type": a.type, "status": a.status, "tracked": a.tracked} for a in rows]
+    return [
+        {"qt_account_id": a.qt_account_id, "type": a.type, "status": a.status, "tracked": a.tracked, "broker": a.broker}
+        for a in rows
+    ]
 
 
 async def _sync_accounts_from_qt(state) -> list[dict]:
@@ -94,6 +97,17 @@ async def paste_token(request: Request, body: TokenPaste):
         raise HTTPException(400, str(exc))
     accounts = await _sync_accounts_from_qt(state)
     return {"ok": True, "token": await state.tokens.status(), "accounts": accounts}
+
+
+@router.post("/settings/qt-retire")
+async def retire_questrade(request: Request):
+    """Freeze Questrade after moving brokers (closing snapshot → jobs stand down)."""
+    from ..services import history
+
+    state = request.app.state
+    result = await history.retire_questrade(state.sessions, state.qt)
+    recompute = await history.recompute(state.sessions, state.yf)
+    return {"ok": True, "retired": result, "recompute": recompute}
 
 
 @router.post("/settings/qt-test")

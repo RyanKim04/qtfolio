@@ -1,11 +1,47 @@
 """§7 math: TWR chain-linking (incl. day one and a mid-period deposit), seam
 rescaling against synthetic snapshots, valuation forward-fill, range stats."""
 
-from datetime import date
+import statistics
+from datetime import date, timedelta
 
-from app.services.series import apply_ground_truth, range_stats, twr_index, value_series
+from app.services.series import (
+    apply_ground_truth,
+    fx_translation_series,
+    range_stats,
+    twr_index,
+    value_series,
+)
 
 D = [date(2024, 1, i) for i in range(1, 12)]
+M = 1_000_000
+
+
+def test_fx_translation_gain_on_usd_holding():
+    # Hold 10 USD shares @ $100 (=$1000 USD). Rate goes 1.30 -> 1.40 over the window.
+    # FX gain = 1000_00 USD cents × (1.40 − 1.30) = 100_00 CAD cents ($100).
+    daily_qty = {D[0]: {"XYZ": 10 * M}, D[1]: {"XYZ": 10 * M}}
+    daily_cash: dict = {D[0]: {}, D[1]: {}}
+    closes = {"XYZ": {D[0]: 100_00, D[1]: 100_00}}
+    fx = {D[0]: 1_300_000, D[1]: 1_400_000}
+    out = fx_translation_series(daily_qty, daily_cash, closes, fx, {"XYZ": "USD"})
+    assert out[D[0]] == 0
+    assert out[D[1]] == 100_00  # $100 of CAD P&L came purely from USD/CAD moving
+
+
+def test_fx_translation_zero_for_cad_only_portfolio():
+    daily_qty = {D[0]: {"TD.TO": 10 * M}, D[1]: {"TD.TO": 10 * M}}
+    closes = {"TD.TO": {D[0]: 80_00, D[1]: 90_00}}
+    fx = {D[0]: 1_300_000, D[1]: 1_400_000}
+    out = fx_translation_series(daily_qty, {}, closes, fx, {"TD.TO": "CAD"})
+    assert out[D[0]] == 0 and out[D[1]] == 0  # CAD holdings carry no FX effect
+
+
+def test_fx_translation_counts_usd_cash():
+    daily_qty = {D[0]: {}, D[1]: {}}
+    daily_cash = {D[0]: {"USD": 500_00}, D[1]: {"USD": 500_00}}
+    fx = {D[0]: 1_400_000, D[1]: 1_350_000}  # USD/CAD falls 1.40 -> 1.35
+    out = fx_translation_series(daily_qty, daily_cash, {}, fx, {})
+    assert out[D[1]] == 500_00 * (1_350_000 - 1_400_000) // M  # negative FX (−$25.00)
 
 
 def test_twr_day_one_deposit_is_well_defined():
@@ -89,3 +125,18 @@ def test_xirr_mwr_sane():
     flows = {dates[1]: 100_00}
     stats = range_stats(dates, values, idx, flows)
     assert stats["mwr"] is not None and 0 < stats["mwr"] < 0.30
+
+
+def test_range_stats_vol_and_days_on_market_sessions():
+    # Mon..Mon calendar series; the weekend rows are flat (no market).
+    days = [date(2026, 6, 1) + timedelta(days=i) for i in range(8)]  # Mon 6/1 .. Mon 6/8
+    levels = [100, 102, 99, 101, 100, 100, 100, 95]
+    idx = {d: float(v) for d, v in zip(days, levels)}
+    values = {d: v * 100 for d, v in zip(days, levels)}
+    sessions = {d for d in days if d.weekday() < 5}
+    stats = range_stats(days, values, idx, {}, sessions)
+    rets = [102 / 100 - 1, 99 / 102 - 1, 101 / 99 - 1, 100 / 101 - 1, 95 / 100 - 1]  # weekend folded into Mon
+    assert abs(stats["vol"] - statistics.stdev(rets) * 252**0.5) < 1e-12
+    assert stats["worst_day"] == {"date": "2026-06-08", "prev": "2026-06-05", "r": 95 / 100 - 1}
+    # calendar-day sampling pads with zeros and understates vol
+    assert range_stats(days, values, idx, {})["vol"] < stats["vol"]

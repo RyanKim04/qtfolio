@@ -7,15 +7,12 @@ import logging
 import sqlite3
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..config import DATA_DIR, TZ, settings, utcnow
 from ..fx import FxService
-from ..models import Symbol
 from ..questrade.client import QuestradeClient
 from ..yf import YfService
-from ..services import candles as candle_svc
 from ..services import history
 from ..services.activities import sync_recent
 from .runner import Job
@@ -42,23 +39,21 @@ def make_eod_snapshot(sessions: async_sessionmaker, qt: QuestradeClient, fx: FxS
         ids = await history.tracked_ids(sessions)
         if not ids:
             return "skipped: no tracked accounts"
-        await history.take_snapshots(sessions, qt, ids)
+        qt_ids = await history.qt_account_ids(sessions)
+        snapped = bool(qt_ids) and not await history.qt_retired(sessions)
+        if snapped:
+            await history.take_snapshots(sessions, qt, qt_ids)
         try:
             await fx.latest()
         except Exception as exc:
             log.warning("fx refresh failed: %s", exc)
-        # Tail-refresh daily candles for current holdings + benchmark history.
-        async with sessions() as session:
-            held = list((await session.execute(select(Symbol).where(Symbol.qt_symbol_id.is_not(None)))).scalars())
-        for s in held:
-            try:
-                await candle_svc.backfill_daily(qt, sessions, s.ticker, s.qt_symbol_id, date.today() - timedelta(days=10))
-            except Exception as exc:
-                log.warning("candle tail refresh failed for %s: %s", s.ticker, exc)
+        # Daily closes (yfinance) for current holdings + benchmark history —
+        # this is what moves the Wealthsimple-era series forward each day.
+        await history.refresh_market_data(sessions, yf, await history.held_tickers(sessions) or None)
         for b in await history.get_setting(sessions, "benchmarks", history.DEFAULT_BENCHMARKS):
             await yf.refresh_daily_closes(b, date.today() - timedelta(days=10))
         result = await history.recompute(sessions, yf)
-        return f"snapshot taken; series: {result}"
+        return f"{'snapshot taken; ' if snapped else ''}series: {result}"
 
     def due(last_success, now_utc) -> bool:
         return last_success is None or last_success < _last_market_close_utc(now_utc)
@@ -74,9 +69,11 @@ def make_eod_snapshot(sessions: async_sessionmaker, qt: QuestradeClient, fx: FxS
 
 def make_activities_sync(sessions: async_sessionmaker, qt: QuestradeClient, yf: YfService) -> Job:
     async def run() -> str:
-        ids = await history.tracked_ids(sessions)
+        if await history.qt_retired(sessions):
+            return "skipped: Questrade retired — Wealthsimple activity arrives via CSV import (Settings)"
+        ids = await history.qt_account_ids(sessions)
         if not ids:
-            return "skipped: no tracked accounts"
+            return "skipped: no tracked Questrade accounts"
         new = await sync_recent(qt, sessions, ids)
         if new:
             await history.repair_missing_tickers(sessions, qt)

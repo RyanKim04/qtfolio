@@ -11,6 +11,8 @@ keepalive fully intact.
 
 from datetime import datetime, timedelta
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from ..config import utcnow
 from ..questrade.tokens import TokenAbsent, TokenBroken, TokenManager
 from .runner import Job
@@ -18,8 +20,12 @@ from .runner import Job
 FRESH_WINDOW = timedelta(minutes=30)
 
 
-def make_job(tokens: TokenManager) -> Job:
+def make_job(tokens: TokenManager, sessions: async_sessionmaker) -> Job:
     async def run() -> str:
+        from ..services import history
+
+        if await history.qt_retired(sessions):
+            return "skipped: Questrade retired (moved to Wealthsimple) — no token chain to keep alive"
         status = await tokens.status()
         if status["status"] == "ok" and status["updated_at"]:
             age = utcnow() - datetime.fromisoformat(status["updated_at"])

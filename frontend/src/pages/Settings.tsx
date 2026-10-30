@@ -4,13 +4,16 @@ import {
   useImportCommit,
   useImportPreview,
   usePasteToken,
+  useRetireQuestrade,
   useRunJob,
   useSetAccounts,
   useSettingsData,
   useTestConnection,
+  useTfsa,
+  useTfsaConfig,
 } from "../api/hooks";
 import { api } from "../api/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { fmtRelTime } from "../lib/format";
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -53,10 +56,12 @@ function Onboarding({ step, onBootstrap, bootstrapping }: { step: 1 | 2 | 3; onB
 }
 
 function ImportCard() {
+  const health = useHealth();
   const preview = useImportPreview();
   const commit = useImportCommit();
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   const onSelect = (f: File | null) => {
     setFile(f);
@@ -64,14 +69,33 @@ function ImportCard() {
     if (f) preview.mutate(f);
   };
 
+  const last = health.data?.wealthsimple?.last_import;
   const p = preview.data;
   return (
-    <Panel title="Import activities (CSV / XLSX)">
-      <div className="space-y-2 text-[13px]">
+    <Panel title="Wealthsimple — import activities">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          onSelect(e.dataTransfer.files?.[0] ?? null);
+        }}
+        className={`space-y-2 rounded-md text-[13px] ${dragging ? "outline-2 outline-dashed outline-accent" : ""}`}
+      >
         <p className="text-muted">
-          Questrade's web app can export activity history further back than the API returns. Export it
-          (Accounts → Activities), upload it here, review the preview, then confirm.
+          Wealthsimple has no API — holdings move only when a fresh export lands here. In Wealthsimple: Activity →
+          Download activities → pick the account → CSV. Drop the file on this card (or choose it) after you trade.
+          Overlapping exports are safe; duplicates are skipped. Questrade CSV/XLSX exports work here too.
         </p>
+        <div className="num text-[12px] text-muted">
+          {last
+            ? `Last import ${fmtRelTime(last.at)} · activity through ${last.through ?? "—"} · ${last.imported} new rows`
+            : "No Wealthsimple import yet."}
+        </div>
         <input
           ref={fileRef}
           type="file"
@@ -84,7 +108,8 @@ function ImportCard() {
         {p && !commit.data && (
           <div className="rounded-md border border-border bg-bg p-3">
             <div className="num">
-              {p.n_rows} rows · {p.date_range ? `${p.date_range[0]} → ${p.date_range[1]}` : "no dates"} · accounts{" "}
+              {p.source === "wealthsimple" ? "Wealthsimple" : "Questrade"} export · {p.n_rows} rows ·{" "}
+              {p.date_range ? `${p.date_range[0]} → ${p.date_range[1]}` : "no dates"} · accounts{" "}
               {p.accounts.join(", ") || "—"}
             </div>
             <div className="mt-1 flex flex-wrap gap-1.5">
@@ -171,40 +196,95 @@ function ListSetting({
   );
 }
 
-function ProfileEditor() {
-  const qc = useQueryClient();
-  const last = useQuery({
-    queryKey: ["ai", "last"],
-    queryFn: () => api<{ analysis: unknown; profile: string }>("/ai/last"),
-  });
-  const [draft, setDraft] = useState<string | null>(null);
-  const shown = draft ?? last.data?.profile ?? "";
+function TfsaSettings() {
+  const tfsa = useTfsa();
+  const save = useTfsaConfig();
+  const [limits, setLimits] = useState<Record<string, string> | null>(null);
+  const [anchorYear, setAnchorYear] = useState<string | null>(null);
+  const [anchorRoom, setAnchorRoom] = useState<string | null>(null);
+  const t = tfsa.data;
 
-  const save = async () => {
-    await api("/settings", { method: "PUT", body: JSON.stringify({ investor_profile: shown }) });
-    setDraft(null);
-    qc.invalidateQueries({ queryKey: ["ai", "last"] });
-  };
+  const stored = Object.fromEntries(Object.entries(t?.limits ?? {}).map(([y, v]) => [y, v == null ? "" : String(v)]));
+  const shownLimits = limits ?? stored;
+  const years = Object.keys(shownLimits).sort();
+  const shownYear = anchorYear ?? String(t?.anchor?.year ?? (t ? Number(t.today.slice(0, 4)) : ""));
+  const shownRoom = anchorRoom ?? (t?.anchor ? String(t.anchor.room) : "");
+  const dirty = limits !== null || anchorYear !== null || anchorRoom !== null;
 
+  const onSave = () =>
+    save.mutate(
+      {
+        limits: Object.fromEntries(years.map((y) => [y, shownLimits[y].trim() === "" ? null : shownLimits[y].trim()])),
+        anchor: shownRoom.trim() === "" ? null : { year: Number(shownYear), room: shownRoom.trim() },
+      },
+      {
+        onSuccess: () => {
+          setLimits(null);
+          setAnchorYear(null);
+          setAnchorRoom(null);
+        },
+      },
+    );
+
+  const field = "num rounded-md border border-border bg-panel px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20";
   return (
-    <label className="block">
-      <span className="text-[11px] uppercase tracking-wide text-muted">
-        Investor profile — the AI analyst reads this before every analysis and chat
-      </span>
-      <textarea
-        value={shown}
-        onChange={(e) => setDraft(e.target.value)}
-        rows={6}
-        className="mt-1 w-full rounded-md border border-border bg-panel px-2.5 py-1.5 text-[13px] leading-relaxed focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-      />
-      <button
-        onClick={save}
-        disabled={draft === null}
-        className="mt-1 rounded-md border border-border bg-panel px-3 py-1.5 text-[13px] hover:bg-bg disabled:opacity-40"
-      >
-        Save profile
-      </button>
-    </label>
+    <div className="space-y-3 text-[13px]">
+      <p className="text-muted">
+        Room is per person across every institution. The dashboard works forward from CRA's confirmed Jan 1 room
+        (CRA My Account → TFSA) using the transactions you record for that year onward.
+      </p>
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-muted">CRA-confirmed room on Jan 1</div>
+        <div className="mt-1 flex items-center gap-2">
+          <input type="number" value={shownYear} onChange={(e) => setAnchorYear(e.target.value)} className={`${field} w-24`} />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Room (CAD)"
+            value={shownRoom}
+            onChange={(e) => setAnchorRoom(e.target.value)}
+            className={`${field} w-40`}
+          />
+        </div>
+      </div>
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-muted">
+          Annual limits — blank = not announced yet (usually November)
+        </div>
+        <div className="mt-1 grid grid-cols-4 gap-2">
+          {years.map((y) => (
+            <label key={y} className="flex items-center gap-1.5">
+              <span className="num w-10 text-muted">{y}</span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="TBA"
+                value={shownLimits[y]}
+                onChange={(e) => setLimits({ ...shownLimits, [y]: e.target.value })}
+                className={`${field} w-full min-w-0`}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onSave}
+          disabled={!dirty || save.isPending}
+          className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:bg-accent-deep disabled:opacity-50"
+        >
+          Save
+        </button>
+        <button
+          onClick={() => setLimits({ ...shownLimits, [String(Math.max(...years.map(Number)) + 1)]: "" })}
+          disabled={!years.length}
+          className="rounded-md border border-border bg-panel px-3 py-1.5 text-[13px] hover:bg-bg disabled:opacity-40"
+        >
+          Add year
+        </button>
+        {save.isError && <span className="text-down">{(save.error as Error).message}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -219,9 +299,11 @@ export function Settings() {
   const settingsData = useSettingsData();
   const paste = usePasteToken();
   const test = useTestConnection();
+  const retire = useRetireQuestrade();
   const setAccounts = useSetAccounts();
   const runJob = useRunJob();
   const [token, setToken] = useState("");
+  const retired = health.data?.questrade?.retired;
 
   const qc = useQueryClient();
   const [benchmarks, setBenchmarks] = useState<string | null>(null);
@@ -273,6 +355,18 @@ export function Settings() {
         </div>
       )}
 
+      <ImportCard />
+
+      {retired ? (
+        <Panel title="Questrade">
+          <p className="text-[13px] text-muted">
+            <span className="text-text">Retired {retired.at}</span> — history frozen
+            {retired.closing_snapshot ? ` at the closing snapshot of ${retired.closing_snapshot}` : ""}. It stays in
+            every chart and in lifetime P&L; token refresh, sync jobs and the broken-token banner are off. Market
+            data comes from Yahoo Finance.
+          </p>
+        </Panel>
+      ) : (
       <Panel title="Questrade">
         <div className="space-y-3 text-[13px]">
           <div className="grid grid-cols-4 gap-2">
@@ -336,8 +430,23 @@ export function Settings() {
             ) : (
               <p className="text-down">{test.data.error}</p>
             ))}
+          <div className="border-t border-border pt-2 text-[12px] text-muted">
+            Moved to another broker?{" "}
+            <button
+              onClick={() => {
+                if (confirm("Freeze Questrade? A closing snapshot is taken now, then Questrade sync stops for good.")) {
+                  retire.mutate();
+                }
+              }}
+              disabled={retire.isPending || t?.status !== "ok"}
+              className="text-accent underline disabled:opacity-40"
+            >
+              {retire.isPending ? "Freezing…" : "Freeze Questrade history"}
+            </button>
+          </div>
         </div>
       </Panel>
+      )}
 
       <Panel title="Tracked accounts">
         {accounts.length === 0 ? (
@@ -352,6 +461,7 @@ export function Settings() {
                   onChange={(e) => setAccounts.mutate([{ qt_account_id: a.qt_account_id, tracked: e.target.checked }])}
                   className="accent-(--color-accent)"
                 />
+                <span className="w-24 text-[11px] uppercase tracking-wide text-muted">{a.broker}</span>
                 <span className="num">{a.qt_account_id}</span>
                 <span>{a.type ?? "?"}</span>
                 <span className="ml-auto text-[11px] text-muted">{a.status ?? ""}</span>
@@ -395,20 +505,8 @@ export function Settings() {
         </p>
       </Panel>
 
-      <ImportCard />
-
-      <Panel title="AI Analyst">
-        <div className="space-y-3 text-[13px]">
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted">Anthropic API key</div>
-            <div className={health.data?.sources?.anthropic ? "text-up" : "text-muted"}>
-              {health.data?.sources?.anthropic
-                ? "● connected — Claude Fable ready"
-                : "○ no key — set ANTHROPIC_API_KEY in .env (console.anthropic.com) and restart the backend"}
-            </div>
-          </div>
-          <ProfileEditor />
-        </div>
+      <Panel title="TFSA contribution room">
+        <TfsaSettings />
       </Panel>
 
       <Panel title="Data sources">

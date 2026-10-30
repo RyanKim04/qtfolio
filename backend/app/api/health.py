@@ -34,21 +34,28 @@ async def health(request: Request):
 
     warnings = await history.get_setting(state.sessions, "reconciliation_warnings", []) or []
     series = await history.series_coverage(state.sessions)
-
-    from ..config import settings as env
+    retired = await history.get_setting(state.sessions, "qt_retired", None)
+    ws_import = await history.get_setting(state.sessions, "ws_last_import", None)
+    async with state.sessions() as session:
+        n_ledger = (await session.execute(
+            select(func.count()).select_from(Account).where(Account.broker != history.QUESTRADE)
+        )).scalar_one()
 
     return {
         "token": token,
+        "questrade": {"retired": retired},
+        "wealthsimple": {"accounts": n_ledger, "last_import": ws_import},
         "jobs": jobs,
-        "sources": {"anthropic": bool(env.anthropic_api_key)},
         "progress": dict(state.runner.live_progress),
         "fx": None if fx is None else {"date": fx.date.isoformat(), "usdcad": fx.usdcad_micro / 1_000_000},
         "candle_adjustment_regime": regime.value_json.strip('"') if regime else None,
         "series": series,
         "warnings": warnings,
         "onboarding": {
-            "has_token": token["status"] != "absent",
-            "token_ok": token["status"] == "ok",
+            # A data source exists: a Questrade token, or (after the move) a
+            # retired Questrade history / Wealthsimple ledger accounts.
+            "has_token": token["status"] != "absent" or bool(retired) or n_ledger > 0,
+            "token_ok": token["status"] == "ok" or bool(retired),
             "has_accounts": n_accounts > 0,
             "has_history": series is not None,
         },

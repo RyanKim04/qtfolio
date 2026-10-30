@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import ai as ai_api, health, imports, performance, portfolio, settings as settings_api, stocks as stocks_api, sync
+from .api import health, imports, performance, portfolio, settings as settings_api, stocks as stocks_api, sync, tfsa
 from .config import BACKEND_DIR, REPO_ROOT, settings
 from .db import default_engine
 from .fx import FxService
@@ -20,7 +20,6 @@ from .jobs.runner import JobRunner
 from .questrade.client import QuestradeAPIError, QuestradeClient
 from .questrade.tokens import TokenAbsent, TokenBroken, TokenError, TokenManager
 from .services.portfolio import PortfolioService
-from .services.quotes import QuoteCache
 from .services.stocks import StockService
 from .yf import YfService
 
@@ -49,7 +48,7 @@ async def lifespan(app: FastAPI):
     fx = FxService(sessions)
     yf = YfService(sessions)
     runner = JobRunner(sessions)
-    runner.register(token_keepalive.make_job(tokens))
+    runner.register(token_keepalive.make_job(tokens, sessions))
     runner.register(portfolio_jobs.make_eod_snapshot(sessions, qt, fx, yf))
     runner.register(portfolio_jobs.make_activities_sync(sessions, qt, yf))
     runner.register(portfolio_jobs.make_db_backup(sessions))
@@ -62,8 +61,8 @@ async def lifespan(app: FastAPI):
     app.state.fx = fx
     app.state.yf = yf
     app.state.runner = runner
-    app.state.portfolio = PortfolioService(sessions, qt, QuoteCache(qt), fx)
-    app.state.stocks = StockService(sessions, qt, fx)
+    app.state.portfolio = PortfolioService(sessions, yf, fx)
+    app.state.stocks = StockService(sessions, yf, fx, app.state.portfolio)
 
     async def startup_sequence():
         # (1) Refresh the token chain unconditionally on every process start
@@ -76,10 +75,12 @@ async def lifespan(app: FastAPI):
         log.info("startup sequence complete; scheduler running")
 
     task = asyncio.create_task(startup_sequence())
+    stream = asyncio.create_task(yf.stream_forever())
     try:
         yield
     finally:
         task.cancel()
+        stream.cancel()
         runner.shutdown()
         await qt.aclose()
         await tokens.aclose()
@@ -94,9 +95,9 @@ app.include_router(settings_api.router, prefix="/api")
 app.include_router(portfolio.router, prefix="/api")
 app.include_router(performance.router, prefix="/api")
 app.include_router(stocks_api.router, prefix="/api")
-app.include_router(ai_api.router, prefix="/api")
 app.include_router(imports.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
+app.include_router(tfsa.router, prefix="/api")
 
 
 @app.exception_handler(TokenAbsent)

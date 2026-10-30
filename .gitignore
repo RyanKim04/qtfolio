@@ -5,6 +5,11 @@ data/
 # personal exports (real account data)
 misc/
 
+# personal financial data (real balances, contribution history, account ids) —
+# the repo is public: anything named *_private.* or under a private/ dir stays local
+*_private.*
+private/
+
 # python
 .venv/
 __pycache__/
