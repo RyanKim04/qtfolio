@@ -12,10 +12,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useAttribution, useCompare, useHealth, useHoldings, usePerfIndexed, usePerfStacked, usePerfValue, useRunJob, useSettingsData } from "../api/hooks";
+import { useAttribution, useCompare, useHealth, useHoldings, usePerfIndexed, usePerfMetrics, usePerfStacked, usePerfValue, useRunJob, useSettingsData } from "../api/hooks";
 import type { PerfStats, PerfValueSeries, RangeKey, StatDay } from "../api/types";
 import { DayBreakdownPopover } from "../components/DayBreakdown";
+import { DrawdownChart, MetricsPanel, MonthlyHeatmap, RollingChart, TradeDecisions } from "../components/PerfRisk";
+import { Seg } from "../components/ui";
 import { COLORS, TOOLTIP_STYLE } from "../lib/palette";
+import { fmtFullDate, makeTimeAxis } from "../lib/timeAxis";
 import { fmtMoney, fmtPct, fmtSignedMoney, pnlClass } from "../lib/format";
 
 const RANGES: RangeKey[] = ["1m", "3m", "6m", "1y", "all"];
@@ -23,73 +26,10 @@ const MODES = [
   { key: "value", label: "Value" },
   { key: "compare", label: "Compare" },
   { key: "structure", label: "Structure" },
+  { key: "drawdown", label: "Drawdown" },
+  { key: "rolling", label: "Rolling" },
 ] as const;
 type Mode = (typeof MODES)[number]["key"];
-
-// Series dates are UTC-midnight timestamps. Format them in UTC, or every
-// label and tooltip shifts one day back in Toronto time.
-const fmtFullDate = (ts: number) =>
-  new Date(ts).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
-
-// Explicit, non-repeating axis ticks: short ranges get ~8 day-level ticks
-// ("Jul 14"); long ranges get one tick per month boundary, thinned to ≤ 12,
-// with the year shown only on January ("Jan 2026").
-function makeTimeAxis(dates: string[]): { ticks: number[]; fmt: (ts: number) => string } {
-  if (!dates.length) return { ticks: [], fmt: () => "" };
-  const start = new Date(dates[0]).getTime();
-  const end = new Date(dates[dates.length - 1]).getTime();
-  const spanDays = (end - start) / 86_400_000;
-  if (spanDays <= 130) {
-    const step = Math.max(1, Math.ceil(dates.length / 8));
-    const ticks = dates.filter((_, i) => i % step === 0).map((d) => new Date(d).getTime());
-    return {
-      ticks,
-      fmt: (ts) => new Date(ts).toLocaleDateString("en-CA", { month: "short", day: "numeric", timeZone: "UTC" }),
-    };
-  }
-  const months: number[] = [];
-  const d0 = new Date(start);
-  let cur = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1);
-  while (cur <= end) {
-    months.push(cur);
-    const c = new Date(cur);
-    cur = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1);
-  }
-  // Every month up to 3 years, then calendar-aligned steps (quarters, then
-  // Januaries), so ticks never skip in an arbitrary "Jun, Sep" pattern.
-  let ticks = months;
-  if (months.length > 36) {
-    const quarters = months.filter((ts) => new Date(ts).getUTCMonth() % 3 === 0);
-    ticks = quarters.length > 40 ? months.filter((ts) => new Date(ts).getUTCMonth() === 0) : quarters;
-  }
-  return {
-    ticks,
-    fmt: (ts) => {
-      const d = new Date(ts);
-      return d.getUTCMonth() === 0
-        ? d.toLocaleDateString("en-CA", { month: "short", year: "numeric", timeZone: "UTC" })
-        : d.toLocaleDateString("en-CA", { month: "short", timeZone: "UTC" });
-    },
-  };
-}
-
-function Seg<T extends string>({ value, options, onChange }: { value: T; options: readonly { key: T; label: string }[] | T[]; onChange: (v: T) => void }) {
-  const opts = options.map((o) => (typeof o === "string" ? { key: o, label: o.toUpperCase() } : o));
-  return (
-    <div className="flex overflow-hidden rounded-md border border-border">
-      {opts.map((o) => (
-        <button
-          key={o.key}
-          onClick={() => onChange(o.key)}
-          aria-pressed={value === o.key}
-          className={`px-2.5 py-1 text-[12px] ${value === o.key ? "bg-accent font-medium text-white" : "bg-panel text-muted hover:text-text"}`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // Value vs capital-in, with the gap shaded green
 // above / red below, with interpolated crossover points so the fill never gaps.
@@ -518,6 +458,11 @@ export function Performance() {
   const [logScale, setLogScale] = useState(false);
   const [baseline, setBaseline] = useState<"range" | "inception">("inception");
   const value = usePerfValue(range, baseline);
+  const settings = useSettingsData();
+  const benchmarks: string[] = (settings.data?.settings.benchmarks as string[]) ?? ["QQQ", "SMH", "SPY", "XEQT.TO"];
+  const [benchmark, setBenchmark] = useState("SPY");
+  const metricsQ = usePerfMetrics(range, benchmark);
+  const metrics = metricsQ.data && !metricsQ.data.empty ? metricsQ.data : null;
   const health = useHealth();
   const runJob = useRunJob();
   const refreshing =
@@ -582,14 +527,28 @@ export function Performance() {
           <ValueChart data={value.data} baseline={baseline} />
         ) : mode === "compare" ? (
           <CompareChart range={range} logScale={logScale} />
-        ) : (
+        ) : mode === "structure" ? (
           <StructureChart range={range} />
+        ) : !metrics ? (
+          <p className="py-16 text-center text-[13px] text-muted">{metricsQ.isError ? "Couldn't compute risk metrics; try Refresh." : "Loading…"}</p>
+        ) : mode === "drawdown" ? (
+          <DrawdownChart m={metrics} />
+        ) : (
+          <RollingChart m={metrics} />
         )}
       </div>
 
       {value.data?.stats && <StatsStrip stats={value.data.stats} />}
 
+      {metrics && (
+        <MetricsPanel m={metrics} benchmarks={[...new Set(["SPY", ...benchmarks])]} benchmark={benchmark} onBenchmark={setBenchmark} />
+      )}
+
       <AttributionTable range={range} />
+
+      {metrics && <MonthlyHeatmap m={metrics} />}
+
+      <TradeDecisions range={range} />
     </div>
   );
 }

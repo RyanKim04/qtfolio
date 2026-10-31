@@ -9,9 +9,9 @@ export function fmtMoney(v: number | null | undefined, currency: string, digits 
   }).format(v);
 }
 
-export function fmtSignedMoney(v: number | null | undefined, currency: string): string {
+export function fmtSignedMoney(v: number | null | undefined, currency: string, digits = 2): string {
   if (v == null || Number.isNaN(v)) return "—";
-  return `${v > 0 ? "+" : ""}${fmtMoney(v, currency)}`;
+  return `${v > 0 ? "+" : ""}${fmtMoney(v, currency, digits)}`;
 }
 
 export function fmtNum(v: number | null | undefined, digits = 2): string {
@@ -62,4 +62,20 @@ export function fmtEtTime(iso: string | null | undefined): string {
     hour: "numeric",
     minute: "2-digit",
   })} ET`;
+}
+
+/** A fraction (0.0123) as a percent ("+1.23%"). */
+export function fmtFrac(v: number | null | undefined, signed = true, digits = 2): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  const p = v * 100;
+  return `${signed && p > 0 ? "+" : ""}${p.toFixed(digits)}%`;
+}
+
+/** A driver move in its own unit: bp, VIX points or percent. */
+export function fmtUnit(v: number | null | undefined, unit: string, digits = 1): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  const s = v > 0 ? "+" : "";
+  if (unit === "bp") return `${s}${v.toFixed(0)} bp`;
+  if (unit === "pts") return `${s}${v.toFixed(digits)} pts`;
+  return `${s}${v.toFixed(digits)}%`;
 }

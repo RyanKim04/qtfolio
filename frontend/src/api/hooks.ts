@@ -4,26 +4,41 @@ import type {
   Account,
   Allocation,
   Attribution,
+  CausalGraph,
   CompareResult,
+  CovarianceResult,
+  CovMethod,
   Currency,
   DayBreakdown,
+  DecisionsResult,
+  Empty,
+  EventResult,
+  FactorsResult,
   Health,
   Holdings,
   ImportPreview,
   ImportResult,
+  IrfResult,
   PerfIndexedSeries,
+  PerfMetrics,
   PerfStackedSeries,
   PerfValueSeries,
   RangeKey,
+  ReverseResult,
+  RiskSummary,
+  RiskWindow,
   RsSeries,
   SettingsData,
+  ShockResult,
   StockCandlesPayload,
   StockLevels,
   StockPosition,
+  StressResult,
   Summary,
   TfsaRecordResult,
   TfsaSummary,
   TfsaTxnInput,
+  VarResult,
 } from "./types";
 
 // Backend prices come from Yahoo's streamer (seconds behind the tape), so the
@@ -248,5 +263,115 @@ export function useTfsaConfig() {
       anchor: { year: number; room: number | string } | null;
     }) => api<unknown>("/tfsa/config", { method: "PUT", body: JSON.stringify(cfg) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tfsa"] }),
+  });
+}
+
+// -- Risk analytics. Results are end-of-day computations cached server-side,
+// so they never join the 5 s live poll.
+
+const RISK_STALE = 10 * 60_000;
+
+export function useRiskSummary() {
+  return useQuery({
+    queryKey: ["risk", "summary"],
+    queryFn: () => api<RiskSummary | Empty>("/risk/summary"),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useRiskCovariance(method: CovMethod, window: RiskWindow) {
+  return useQuery({
+    queryKey: ["risk", "covariance", method, window],
+    queryFn: () => api<CovarianceResult | Empty>(`/risk/covariance?method=${method}&window=${window}`),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useRiskVar(conf: number, horizon: number) {
+  return useQuery({
+    queryKey: ["risk", "var", conf, horizon],
+    queryFn: () => api<VarResult | Empty>(`/risk/var?conf=${conf}&horizon=${horizon}`),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useRiskFactors(window: RiskWindow) {
+  return useQuery({
+    queryKey: ["risk", "factors", window],
+    queryFn: () => api<FactorsResult | Empty>(`/risk/factors?window=${window}`),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useRiskStress() {
+  return useQuery({
+    queryKey: ["risk", "stress"],
+    queryFn: () => api<StressResult | Empty>("/risk/stress"),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useRiskShock(shocks: Record<string, number>) {
+  const active = Object.fromEntries(Object.entries(shocks).filter(([, v]) => v));
+  return useQuery({
+    queryKey: ["risk", "shock", JSON.stringify(active)],
+    queryFn: () =>
+      api<ShockResult | Empty>("/risk/stress/custom", { method: "POST", body: JSON.stringify({ shocks: active }) }),
+    enabled: Object.keys(active).length > 0,
+    staleTime: RISK_STALE,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useRiskReverse(loss: number, horizon: number) {
+  return useQuery({
+    queryKey: ["risk", "reverse", loss, horizon],
+    queryFn: () =>
+      api<ReverseResult | Empty>("/risk/stress/reverse", { method: "POST", body: JSON.stringify({ loss, horizon }) }),
+    staleTime: RISK_STALE,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCausalGraph() {
+  return useQuery({
+    queryKey: ["risk", "causal", "graph"],
+    queryFn: () => api<CausalGraph | Empty>("/risk/causal/graph"),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useIrf(driver: string) {
+  return useQuery({
+    queryKey: ["risk", "causal", "irf", driver],
+    queryFn: () => api<IrfResult | Empty>(`/risk/causal/irf?driver=${driver}`),
+    staleTime: RISK_STALE,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function usePerfMetrics(range: RangeKey, benchmark: string) {
+  return useQuery({
+    queryKey: ["perf", "metrics", range, benchmark],
+    queryFn: () => api<PerfMetrics | Empty>(`/performance/metrics?range=${range}&benchmark=${encodeURIComponent(benchmark)}`),
+    refetchInterval: PERF_LIVE_MS,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useDecisions(range: RangeKey) {
+  return useQuery({
+    queryKey: ["perf", "decisions", range],
+    queryFn: () => api<DecisionsResult>(`/performance/decisions?range=${range}`),
+    staleTime: RISK_STALE,
+  });
+}
+
+export function useEvent(date: string | null) {
+  return useQuery({
+    queryKey: ["perf", "event", date],
+    queryFn: () => api<EventResult | Empty>(`/performance/event?date=${date}`),
+    enabled: Boolean(date),
+    staleTime: RISK_STALE,
   });
 }

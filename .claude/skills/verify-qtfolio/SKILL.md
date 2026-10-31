@@ -1,6 +1,6 @@
 ---
 name: verify-qtfolio
-description: Launch an isolated qtfolio instance (FastAPI backend + Vite React UI, scratch SQLite DB, fake $HOME) and drive the real web UI in headless Chrome to prove a change works. Covers importing Wealthsimple exports, Dashboard holdings, Performance, stock charts, TFSA room. Use whenever you need evidence that a qtfolio feature behaves correctly end to end, not just that pytest passes.
+description: Launch an isolated qtfolio instance (FastAPI backend + Vite React UI, scratch SQLite DB, fake $HOME) and drive the real web UI in headless Chrome to prove a change works. Covers importing Wealthsimple exports, Dashboard holdings, Performance, stock charts, TFSA room, and risk analytics (Risk tab, Dashboard risk row, Performance risk metrics). Use whenever you need evidence that a qtfolio feature behaves correctly end to end, not just that pytest passes.
 ---
 
 # Verify qtfolio
@@ -55,10 +55,11 @@ It is read-only. It checks that both pids are alive, that each port's listener i
 
 Ready-made journeys live in `journeys/`. Copy one as the template for a new journey. Stable handles in this UI:
 
-- Section headings are real `<h2>` elements: `Holdings`, `Allocation`, `TFSA room · <year>`, `P&L by position`, `Position`, `Levels`, plus Settings panels such as `Import Wealthsimple activities`, `Tracked accounts`, `Sync`, `TFSA contribution room`, `Backups`, and `Diagnostics`. Scope with `page.locator("section", { has: page.getByRole("heading", { name: "…" }) })`.
-- Left-rail nav is links named `Dashboard`, `Performance`, `Settings`. Stock pages live at `/stocks/<TICKER>`; clicking a holdings row also opens one.
-- Buttons are named by visible text, such as `Import N rows`, `Run now`, `Record`, `Save`, `CAD`, `USD`, and range buttons `1M` `3M` `6M` `1Y` `ALL`.
-- Inputs have no labels. Use their placeholders (`Go to symbol…`, `Room (CAD)`, `Amount (CAD)`, `Institution`) or the single `input[type="file"]` in the import card.
+- Section headings are real `<h2>` elements: `Holdings`, `Allocation`, `TFSA room` (`TFSA room · <year>` once configured), `P&L by position`, `Risk-adjusted performance`, `Monthly returns`, `Trade decisions`, `Position`, `Levels`, the Risk tab's `Where the risk comes from`, `Correlation`, `Factor exposures`, `Value at Risk and expected shortfall`, `Stress tests`, `Causal view of macro risk`, plus Settings panels such as `Import Wealthsimple activities`, `Tracked accounts`, `Sync`, `TFSA contribution room`, `Backups`, and `Diagnostics`. Scope with `page.locator("section", { has: page.getByRole("heading", { name: "…" }) })`.
+- Left-rail nav is links named `Dashboard`, `Performance`, `Risk`, `Settings`. Use `exact: true` for `Risk`: the Dashboard's `Full risk analysis` link and the holdings `Risk` header also match. Stock pages live at `/stocks/<TICKER>`; clicking a holdings row also opens one.
+- Buttons are named by visible text, such as `Import N rows`, `Run now`, `Record`, `Save`, `CAD`, `USD`, range buttons `1M` `3M` `6M` `1Y` `ALL`, and Performance modes `Value` `Compare` `Structure` `Drawdown` `Rolling`. Two TFSA buttons are named `Record` (tab and submit); see tfsa-room.
+- Inputs have no labels. Use their placeholders (`Go to symbol…`, `Room (CAD)`, `Amount (CAD)`, `Institution`) or the single `input[type="file"]` in the import card. Inputs without a placeholder: the TFSA date (`input[type=date]`), type (`select`) and Settings anchor year; the Performance benchmark `select`.
+- `confirm()` dialogs (TFSA delete) are dismissed by Playwright unless the journey registers `page.once("dialog", (d) => d.accept())` first.
 
 **API (secondary).** Use the API to check side effects, or when the feature has no UI:
 

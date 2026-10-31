@@ -1,28 +1,37 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { HoldingRow } from "../api/types";
+import type { HoldingRow, RiskHolding } from "../api/types";
 import { useCurrency } from "../App";
-import { fmtEtTime, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, pnlClass } from "../lib/format";
+import { fmtEtTime, fmtFrac, fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, pnlClass } from "../lib/format";
 import { Sparkline } from "./Sparkline";
 
-type SortKey = keyof Pick<
-  HoldingRow,
-  "ticker" | "qty" | "avg_cost" | "last" | "market_value" | "weight" | "day_pnl" | "open_pnl" | "open_pnl_pct"
->;
+type SortKey =
+  | keyof Pick<HoldingRow, "ticker" | "qty" | "avg_cost" | "last" | "market_value" | "weight" | "day_pnl" | "open_pnl" | "open_pnl_pct">
+  | "risk_pct"
+  | "beta";
 
-const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
+type Row = HoldingRow & { risk_pct?: number | null; beta?: number | null; proxied?: number };
+
+const COLUMNS: { key: SortKey; label: string; align?: "right"; title?: string }[] = [
   { key: "ticker", label: "Ticker" },
   { key: "qty", label: "Qty", align: "right" },
   { key: "avg_cost", label: "Avg cost", align: "right" },
   { key: "last", label: "Last", align: "right" },
   { key: "market_value", label: "Mkt value", align: "right" },
   { key: "weight", label: "Weight", align: "right" },
+  { key: "risk_pct", label: "Risk", align: "right", title: "Share of portfolio volatility (Euler contribution, Ledoit-Wolf covariance over one year). Compare with Weight." },
+  { key: "beta", label: "Beta", align: "right", title: "Beta to the S&P 500 in CAD over one year" },
   { key: "day_pnl", label: "Day P&L", align: "right" },
   { key: "open_pnl", label: "Open P&L", align: "right" },
   { key: "open_pnl_pct", label: "Open %", align: "right" },
 ];
 
-export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
+export function HoldingsTable({ rows: base, risk }: { rows: HoldingRow[]; risk?: RiskHolding[] }) {
+  const byAsset = new Map((risk ?? []).map((h) => [h.asset, h]));
+  const rows: Row[] = base.map((r) => {
+    const h = byAsset.get(r.ticker);
+    return { ...r, risk_pct: h?.risk_pct ?? null, beta: h?.beta_spy ?? null, proxied: h?.proxied ?? 0 };
+  });
   const { currency } = useCurrency();
   const navigate = useNavigate();
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "market_value", dir: -1 });
@@ -47,6 +56,7 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
           {COLUMNS.map((c) => (
             <th
               key={c.key}
+              title={c.title}
               onClick={() => clickSort(c.key)}
               className={`cursor-pointer select-none px-2 py-1.5 font-medium hover:text-text ${
                 c.align === "right" ? "text-right" : "text-left"
@@ -85,6 +95,14 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
             </td>
             <td className="num px-2 py-1.5 text-right">{fmtMoney(r.market_value, currency)}</td>
             <td className="num px-2 py-1.5 text-right text-muted">{fmtPct(r.weight, false)}</td>
+            <td
+              className={`num px-2 py-1.5 text-right ${r.risk_pct != null && r.weight != null && r.risk_pct * 100 > r.weight * 1.5 ? "font-medium text-text" : "text-muted"}`}
+              title={r.proxied ? `${Math.round(r.proxied * 100)}% of the year is proxied from its factor model (short history)` : undefined}
+            >
+              {fmtFrac(r.risk_pct, false, 1)}
+              {r.proxied ? "*" : ""}
+            </td>
+            <td className="num px-2 py-1.5 text-right text-muted">{r.beta != null ? fmtNum(r.beta, 2) : "—"}</td>
             <td className={`num px-2 py-1.5 text-right ${pnlClass(r.day_pnl)}`}>{fmtSignedMoney(r.day_pnl, currency)}</td>
             <td className={`num px-2 py-1.5 text-right ${pnlClass(r.open_pnl)}`}>{fmtSignedMoney(r.open_pnl, currency)}</td>
             <td className={`num px-2 py-1.5 text-right ${pnlClass(r.open_pnl_pct)}`}>{fmtPct(r.open_pnl_pct)}</td>

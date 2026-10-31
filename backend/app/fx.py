@@ -1,8 +1,10 @@
-"""Bank of Canada Valet client for daily USDCAD (FXUSDCAD).
+"""Bank of Canada Valet client for daily USDCAD (FXUSDCAD) and the 3-month
+T-bill yield (TB.CDN.90D.MID).
 
 Rates persist as INTEGER micro-units (USDCAD × 1e6). The latest rate drives the
 header currency toggle; ensure_history() backfills back to the first activity so
-USD trades, cash and flows are valued at their own day's rate.
+USD trades, cash and flows are valued at their own day's rate. The T-bill yield
+(INTEGER basis points) is the risk-free rate of the risk-adjusted metrics.
 """
 
 import logging
@@ -14,11 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .config import utcnow
-from .models import FxRate
+from .models import FxRate, RiskFreeRate
 
 log = logging.getLogger(__name__)
 
 VALET_URL = "https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json"
+TBILL_SERIES = "TB.CDN.90D.MID"
+TBILL_URL = f"https://www.bankofcanada.ca/valet/observations/{TBILL_SERIES}/json"
 MICRO = Decimal(1_000_000)
 
 
@@ -28,6 +32,7 @@ class FxService:
         self._http = httpx.AsyncClient(timeout=15.0)
         self._last_attempt: float = 0.0
         self._covered_from: date | None = None  # earliest start a backfill already ran for
+        self._tbill_attempt: float = 0.0
 
     async def aclose(self):
         await self._http.aclose()
@@ -101,3 +106,35 @@ class FxService:
                 else:
                     existing.usdcad_micro = micro
             await session.commit()
+
+    async def risk_free(self, start: date) -> dict[date, int]:
+        """3-month T-bill yield in bp per business day from `start`. Fetches what is
+        missing at most hourly; a failed fetch serves what is stored."""
+        async with self._sessions() as session:
+            span = (await session.execute(select(RiskFreeRate.date).order_by(RiskFreeRate.date))).scalars().all()
+        now_ts = utcnow().timestamp()
+        stale = not span or span[0] > start + timedelta(days=7) or (date.today() - span[-1]).days > 1
+        if stale and now_ts - self._tbill_attempt > 3600:
+            self._tbill_attempt = now_ts
+            fetch_from = start if not span or span[0] > start + timedelta(days=7) else span[-1]
+            try:
+                resp = await self._http.get(TBILL_URL, params={"start_date": fetch_from.isoformat()})
+                resp.raise_for_status()
+                async with self._sessions() as session:
+                    for obs in resp.json().get("observations", []):
+                        v = (obs.get(TBILL_SERIES) or {}).get("v")
+                        if not v:
+                            continue
+                        d = date.fromisoformat(obs["d"])
+                        bp = int(Decimal(v) * 100)
+                        row = await session.get(RiskFreeRate, d)
+                        if row is None:
+                            session.add(RiskFreeRate(date=d, rate_bp=bp))
+                        else:
+                            row.rate_bp = bp
+                    await session.commit()
+            except Exception as exc:
+                log.warning("BoC T-bill fetch failed: %s", exc)
+        async with self._sessions() as session:
+            rows = (await session.execute(select(RiskFreeRate).where(RiskFreeRate.date >= start - timedelta(days=7)))).scalars().all()
+        return {r.date: r.rate_bp for r in rows}

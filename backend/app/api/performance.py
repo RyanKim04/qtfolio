@@ -455,3 +455,84 @@ async def performance_compare(request: Request, symbols: str = Query(...), range
         out.append({"symbol": raw,
                     "indexed": [round((ff.at(d, flat_backfill=True) or base) / base * 100, 4) for d in dates]})
     return {"empty": False, "range": range, "dates": [d.isoformat() for d in dates], "series": out}
+
+
+@router.get("/performance/metrics")
+async def performance_metrics(request: Request, range: str = Query("1y"), benchmark: str = Query("SPY")):
+    """Risk-adjusted statistics, benchmark-relative statistics, rolling series,
+    the underwater curve and monthly returns for the window. The benchmark is
+    measured in CAD like the portfolio (USD listings converted at Yahoo's
+    USD/CAD, the same source as the closes)."""
+    import numpy as np
+
+    from ..services.risk import metrics
+    from ..services.risk.data import FX_SYMBOL
+    from ..services.series import trading_sample
+
+    if range not in RANGES:
+        raise HTTPException(400, f"range must be one of {RANGES}")
+    state = request.app.state
+    m = await _series_maps(state)
+    if m is None:
+        return {"empty": True}
+    all_dates = m["dates"]
+    start = range_start(all_dates, range)
+    dates = trading_sample([d for d in all_dates if d >= start], await history.trading_days(state.sessions))
+    if len(dates) < 6:
+        return {"empty": True, "reason": "not enough sessions in this range"}
+    idx = np.array([m["idx"][d] for d in dates])
+
+    rf_bp = _FFill(await state.fx.risk_free(dates[0]))
+    rf = np.array([(rf_bp.at(d, flat_backfill=True) or 0) / 1e4 / 252 for d in dates[:-1]])
+
+    bench = None
+    sym = benchmark.strip().upper()
+    async with state.sessions() as session:
+        srow = await session.get(Symbol, sym)
+    yf_sym = to_yf_symbol(sym, srow.exchange if srow else None)
+    closes = await state.yf.ensure_daily_closes(yf_sym, dates[0] - timedelta(days=14))
+    if closes:
+        live_on = dates[-1] if m["live_price"] else None
+        if live_on and live_on not in closes:
+            quote = (await state.yf.quotes([yf_sym])).get(yf_sym)
+            if quote:
+                closes = {**closes, live_on: quote["last"]}
+        ff = _FFill(closes)
+        lv = np.array([ff.at(d, flat_backfill=True) or np.nan for d in dates], dtype=float)
+        cad = yf_sym.endswith((".TO", ".NE", ".V")) or (srow is not None and srow.currency == "CAD")
+        if not cad:
+            fxc = _FFill(await state.yf.ensure_daily_closes(FX_SYMBOL, dates[0] - timedelta(days=14)))
+            lv = lv * np.array([fxc.at(d, flat_backfill=True) or np.nan for d in dates], dtype=float)
+        bench = lv[1:] / lv[:-1] - 1
+
+    perf = metrics.performance(dates, idx, rf, bench)
+    return {
+        "empty": False, "range": range, "benchmark": sym, "start": dates[0].isoformat(), "end": dates[-1].isoformat(),
+        "live": bool(m["live_price"]), "stats": perf,
+        "rolling": metrics.rolling(dates, idx, rf, bench),
+        "underwater": metrics.underwater(dates, idx),
+        "monthly": metrics.monthly_returns(dates, idx),
+    }
+
+
+@router.get("/performance/decisions")
+async def performance_decisions(request: Request, range: str = Query("all")):
+    """Each trading day's decisions against the no-trade counterfactual, with
+    a placebo percentile (services/risk/counterfactual.py)."""
+    if range not in RANGES:
+        raise HTTPException(400, f"range must be one of {RANGES}")
+    since = None
+    if range != "all":
+        rows = await _load_series(request.app.state)
+        if rows:
+            since = range_start([r.date for r in rows], range)
+    return await request.app.state.risk.decisions(since)
+
+
+@router.get("/performance/event")
+async def performance_event(request: Request, date_: date = Query(..., alias="date")):
+    """Abnormal return after a date the owner picks (BSTS counterfactual)."""
+    out = await request.app.state.risk.event(date_)
+    if out is None:
+        return {"empty": True, "reason": "needs 40+ sessions of history before the date and one after it"}
+    return {"empty": False, **out}

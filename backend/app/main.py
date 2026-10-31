@@ -13,13 +13,14 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import health, imports, performance, portfolio, settings as settings_api, stocks as stocks_api, sync, tfsa
+from .api import health, imports, performance, portfolio, risk as risk_api, settings as settings_api, stocks as stocks_api, sync, tfsa
 from .config import BACKEND_DIR, REPO_ROOT, settings
 from .db import default_engine
 from .fx import FxService
 from .jobs import portfolio_jobs
 from .jobs.runner import JobRunner
 from .services.portfolio import PortfolioService
+from .services.risk.service import RiskService
 from .services.stocks import StockService
 from .services.ws_watch import Watcher
 from .yf import YfService
@@ -47,7 +48,9 @@ async def lifespan(app: FastAPI):
     fx = FxService(sessions)
     yf = YfService(sessions)
     runner = JobRunner(sessions)
-    runner.register(portfolio_jobs.make_eod_snapshot(sessions, fx, yf))
+    portfolio_svc = PortfolioService(sessions, yf, fx)
+    risk = RiskService(sessions, yf, fx, portfolio_svc)
+    runner.register(portfolio_jobs.make_eod_snapshot(sessions, fx, yf, risk))
     runner.register(portfolio_jobs.make_db_backup(sessions))
 
     app.state.engine = engine
@@ -55,7 +58,8 @@ async def lifespan(app: FastAPI):
     app.state.fx = fx
     app.state.yf = yf
     app.state.runner = runner
-    app.state.portfolio = PortfolioService(sessions, yf, fx)
+    app.state.portfolio = portfolio_svc
+    app.state.risk = risk
     app.state.stocks = StockService(sessions, yf, fx, app.state.portfolio)
     app.state.ws_watch = Watcher(app.state)
 
@@ -101,6 +105,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
 app.include_router(portfolio.router, prefix="/api")
 app.include_router(performance.router, prefix="/api")
+app.include_router(risk_api.router, prefix="/api")
 app.include_router(stocks_api.router, prefix="/api")
 app.include_router(imports.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
