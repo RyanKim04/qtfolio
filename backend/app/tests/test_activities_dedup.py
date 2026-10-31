@@ -1,4 +1,4 @@
-"""Multiset-aware dedup — occurrence-indexed hashes, overlapping
+"""Multiset-aware dedup: occurrence-indexed hashes, overlapping
 imports, and cross-source collapse (the rules every stored hash was built on)."""
 
 from datetime import date

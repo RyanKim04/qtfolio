@@ -188,8 +188,8 @@ function Reconcile({ t }: { t: TfsaSummary }) {
   return (
     <Alert level="warning">
       <p>
-        March check: compare the Jan 1, {r.year} TFSA room in CRA My Account with the app's {cad(r.computed_jan1)}. Confirm
-        it (or enter CRA's figure) to re-anchor on {r.year}.
+        Check your Jan 1, {r.year} TFSA room in CRA My Account. The app has {cad(r.computed_jan1)}. Confirm it, or enter
+        CRA's figure, to restart the count from {r.year}.
       </p>
       <div className="mt-1.5 flex gap-1.5">
         <input value={value} onChange={(e) => setValue(e.target.value)} className={`${INPUT} num w-32`} />
@@ -264,7 +264,7 @@ export function TfsaRoom() {
               <Row
                 label="Withdrawn"
                 value={cad(t.withdrawn)}
-                sub={t.withdrawn ? `returns as room on Jan 1, ${t.next_year} — not this year` : undefined}
+                sub={t.withdrawn ? `comes back as room on Jan 1, ${t.next_year}, not this year` : undefined}
               />
               <Row
                 label={`Jan 1, ${t.next_year} projected`}
@@ -272,7 +272,7 @@ export function TfsaRoom() {
                 sub={
                   t.next_limit_provisional ? (
                     <>
-                      {t.next_year} limit not announced yet (usually November) — assumes {cad(t.next_limit)}.{" "}
+                      {t.next_year} limit not announced yet (usually in November). Using {cad(t.next_limit)} for now.{" "}
                       <Link to="/settings" className="text-accent underline">
                         Set it
                       </Link>

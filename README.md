@@ -1,16 +1,16 @@
 # qtfolio
 
-A local, single-user, read-only portfolio terminal. It reconstructs full portfolio history from brokerage activity exports, charts performance the methodologically correct way (deposits separated from market growth), prices everything live, and layers on per-stock technical charts and a TFSA contribution-room tracker.
+A local, single-user, read-only portfolio terminal. It rebuilds portfolio history from brokerage activity exports and charts performance with deposits kept separate from market gains. It also prices holdings live, draws technical charts for any ticker, and tracks TFSA contribution room.
 
-Everything runs on your machine, bound to `127.0.0.1`. No hosting, no auth, no trade execution — the only things that leave your computer are market-data requests to Yahoo Finance and the Bank of Canada FX feed.
+It runs only on your machine, bound to `127.0.0.1`. There is no hosting, no login and no trading. The only network traffic is market data from Yahoo Finance and USD/CAD rates from the Bank of Canada.
 
 ## Features
 
-- **Dashboard** — live holdings (Yahoo streaming quotes, extended hours included), allocation donut, day/open P&L, sparklines, TFSA room.
-- **Performance** — historical value reconstructed from every recorded activity, time- and money-weighted returns, drawdown/volatility on market sessions, best/worst-day breakdowns, P&L by position, and comparison overlays vs. benchmarks. Deposits/withdrawals are never counted as gains.
-- **Stock detail** — TradingView `lightweight-charts` candles + volume for any ticker, with EMA / Bollinger Bands / VWAP / anchored VWAP overlays, RSI and MACD panes, your average-cost line, buy/sell trade markers, and a relative-strength mini-chart.
-- **Data in** — Wealthsimple activities CSV import (two-phase preview/commit, multiset dedup so overlapping exports are safe). A retired Questrade account's history is kept as frozen snapshots.
-- **Resilient jobs** — APScheduler with a catch-up pass on startup, so the app survives being closed for days; weekly DB backups.
+- **Dashboard.** Live holdings from Yahoo's streaming quotes (extended hours included), an allocation donut, day and open P&L, 30-day sparklines, and TFSA room.
+- **Performance.** Daily portfolio value rebuilt from every recorded activity. Shows time- and money-weighted returns, drawdown and volatility over market sessions, best and worst days with a per-position breakdown, P&L by position, and benchmark comparisons. Deposits and withdrawals never count as gains.
+- **Stock detail.** Candles and volume for any ticker (TradingView `lightweight-charts`), with EMA, Bollinger Bands, VWAP and anchored VWAP overlays, RSI and MACD panes, your average-cost line, buy and sell markers, and a relative-strength chart.
+- **Import.** Reads the Wealthsimple activities CSV. Any export saved to `~/Downloads` imports automatically, or you can drop one on the import card to preview it first. Dedup counts identical rows, so overlapping exports never double-count. History from a closed Questrade account is kept as frozen snapshots.
+- **Jobs.** APScheduler, plus a catch-up pass at startup that runs anything missed while the laptop was off. The database is backed up weekly.
 
 ## Stack
 
@@ -18,20 +18,20 @@ Everything runs on your machine, bound to `127.0.0.1`. No hosting, no auth, no t
 |---|---|
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2 (async) + SQLite, Alembic, APScheduler, yfinance |
 | Frontend | React 18 + Vite + TypeScript, Tailwind v4, TanStack Query |
-| Charts | `lightweight-charts` v5 (candles/indicators), Recharts (performance, donut, sparklines) |
+| Charts | `lightweight-charts` v5 (candles, indicators), Recharts (performance, donut) |
 
-Ledger money is stored as integer cents (micro-units for unit prices), never floats. Timestamps are stored in UTC and rendered in `America/Toronto`.
+Ledger money is stored as integer cents and unit prices as integer micro-units, never floats. Timestamps are stored in UTC and shown in `America/Toronto`.
 
 ## Getting started
 
-Prereqs: [`uv`](https://docs.astral.sh/uv/) (provisions Python 3.12 itself) and Node 18+. No API keys are needed.
+You need [`uv`](https://docs.astral.sh/uv/) (it installs Python 3.12 itself) and Node 18+. No API keys.
 
 ```sh
 make install   # backend uv sync + frontend npm install
 make dev       # backend on 127.0.0.1:8000, Vite on 127.0.0.1:5173
 ```
 
-Open http://127.0.0.1:5173 — an empty database routes you to Settings. In Wealthsimple: Activity → Download activities → pick the account → CSV, then drop the file on the import card. Re-import a fresh export after you trade.
+Open http://127.0.0.1:5173. With an empty database the app opens Settings. In Wealthsimple, go to Activity → Download activities, pick the account and choose CSV. The file imports from `~/Downloads` on its own. Download a new export after you trade.
 
 ## Development
 
@@ -39,8 +39,8 @@ Open http://127.0.0.1:5173 — an empty database routes you to Settings. In Weal
 make test   # backend pytest suite
 ```
 
-- `backend/` — FastAPI app: `app/services/` (reconstruction, series/TWR, book, Wealthsimple parser, TFSA, indicators), `app/api/`, `app/jobs/` (scheduler), `app/yf.py` (market data).
-- `frontend/` — SPA: `src/pages/` (Dashboard, Performance, StockDetail, Settings), `src/components/`.
-- `data/` — gitignored runtime state: SQLite DB and weekly backups.
+- `backend/` is the FastAPI app: `app/services/` (reconstruction, series and TWR, book, Wealthsimple parser, TFSA, indicators), `app/api/`, `app/jobs/` (scheduler) and `app/yf.py` (market data).
+- `frontend/` is the single-page app: `src/pages/` (Dashboard, Performance, StockDetail, Settings) and `src/components/`.
+- `data/` is gitignored runtime state: the SQLite database and weekly backups.
 
-The repo is public: real financial data (balances, contribution history, account ids) stays in gitignored `*_private.*` files or the DB — tests use synthetic figures. Migrations run automatically at backend startup (`alembic upgrade head`).
+The repo is public. Real financial data (balances, contribution history, account ids) stays in the database or in gitignored `*_private.*` files, and tests use synthetic numbers. Migrations run at backend startup (`alembic upgrade head`).

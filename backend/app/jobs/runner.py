@@ -1,9 +1,9 @@
 """Job framework.
 
-Every run is logged to job_runs. Catch-up-on-startup is the PRIMARY execution
-path on a laptop; the APScheduler cron firing is the bonus. A job is overdue
-when its last success is older than its cadence (or a custom due-predicate says
-so — M2's eod_snapshot "only if a market close occurred" plugs in there).
+Every run is logged to job_runs. Catch-up on startup is the main execution
+path on a laptop; APScheduler's cron firing is a bonus. A job is overdue when
+its last success is older than its cadence, or when a custom due-predicate says
+so (eod_snapshot uses one: "only if a market close occurred").
 """
 
 import asyncio
@@ -76,7 +76,7 @@ class JobRunner:
 
     async def run(self, name: str, trigger: str = "manual") -> dict:
         """Run a job now, serialized per job. Exceptions land in job_runs, never
-        propagate — a failing job must not take down startup or the scheduler."""
+        propagate, so a failing job can't take down startup or the scheduler."""
         job = self._jobs.get(name)
         if job is None:
             raise KeyError(f"unknown job {name!r}")

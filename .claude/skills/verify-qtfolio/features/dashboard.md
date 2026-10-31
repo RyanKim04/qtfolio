@@ -7,7 +7,7 @@ The Dashboard (`/`) is the live view of the book: total value and day change in 
 - `dash-tiles` shows the tiles `Total value`, `Day change`, `Open P&L`, `MWR since <date>`, and `TWR YTD`.
 - `dash-holdings` shows one row per open position with qty, avg cost, last, market value, weight, P&L, and sparkline. Column headers sort.
 - `dash-cash` shows the Holdings header line `cash $X · $Y USD · Z% of total`.
-- `dash-allocation` shows the donut with `Position` / `Currency` / `Sector` tabs and a legend including `Cash`.
+- `dash-allocation` shows the donut with `Position` / `Currency` tabs and a legend including `Cash`.
 - `dash-currency` makes the header `CAD` / `USD` toggle re-denominate every money value. The choice persists in localStorage.
 - `dash-row-nav` opens `/stocks/<ticker>` when the user clicks a holdings row.
 
@@ -37,4 +37,4 @@ Steps:
 - `Last`, every P&L figure, weights, and totals move with live prices. Assert only qty, avg cost, cash, and ticker presence.
 - The page polls every 5 s and re-renders. Re-query locators after waits instead of holding element handles.
 - The CAD/USD choice persists in localStorage. A new journey gets a fresh browser context, so it starts in CAD.
-- Outside 04:00–20:00 ET on weekdays, the price line reads `closed until …`. That is not an error.
+- Outside 04:00–20:00 ET on weekdays, the price line reads `market closed, pre-market opens …`. That is not an error.

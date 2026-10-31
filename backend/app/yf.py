@@ -4,8 +4,8 @@ crashes the app. Benchmark/comparison closes are auto-adjusted and cached in
 `candles` under interval "1d_yf".
 
 Since the move to Wealthsimple (2026-10-27) yfinance is also the market-data
-source for everything Questrade used to serve: OHLC bars (split-adjusted, NOT
-dividend-adjusted — the portfolio keeps dividends as cash) cached under the
+source for everything Questrade used to serve: OHLC bars (split-adjusted, not
+dividend-adjusted, because the portfolio keeps dividends as cash) cached under the
 app ticker with the legacy interval names (OneDay/OneHour/…), live quotes, and
 symbol resolution. Split-adjusted closes ⇒ the back-adjusted regime (reconstruction.BACK_ADJUSTED) by
 construction.
@@ -32,7 +32,7 @@ def to_yf_symbol(ticker: str, exchange: str | None) -> str:
     t = ticker.upper()
     if exchange in ("TSX", "TSE"):
         return t.replace(".", "-") + ".TO" if not t.endswith(".TO") else t
-    if exchange == "NEO":  # Cboe Canada (CDRs) — Yahoo suffix .NE
+    if exchange == "NEO":  # Cboe Canada (CDRs), Yahoo suffix .NE
         return t.removesuffix(".TO").replace(".", "-") + ".NE"
     if exchange in ("TSXV", "CDNX"):
         return t + ".V"
@@ -56,8 +56,8 @@ SPLITS_RETRY_S = 300
 
 
 def quotes_live(now: datetime | None = None) -> bool:
-    """Inside Yahoo's US trading window — pre-market 04:00 through after-hours
-    20:00 ET, weekdays (holidays not modelled; they just poll for nothing)."""
+    """Inside Yahoo's US trading window: pre-market 04:00 through after-hours
+    20:00 ET on weekdays. Holidays aren't modelled; on those days it polls for nothing."""
     et = (now or datetime.now(timezone.utc)).astimezone(TZ)
     return et.weekday() < 5 and time(4) <= et.time() < time(20)
 BAR_TTL = {"OneDay": 30 * 60, "OneHour": 5 * 60, "FifteenMinutes": 5 * 60, "FiveMinutes": 5 * 60}
@@ -81,8 +81,8 @@ class YfService:
         self._splits_cache: dict[str, tuple[float, dict[date, float]]] = {}  # yf symbol → (expires, splits)
         self._bars_at: dict[tuple[str, str], float] = {}
         self._quotes: dict[str, tuple[dict, float]] = {}
-        # Polled baselines per symbol: (last regular close, previous close) — the
-        # day-change bases a streamed tick is measured against.
+        # Polled baselines per symbol: (last regular close, previous close), the
+        # bases a streamed tick's day change is measured against.
         self._bases: dict[str, tuple[float | None, float | None]] = {}
         # Yahoo streamer (the feed Yahoo's own pages tick from): ~1–3 s behind the
         # tape vs ~1–2 min for the polled quoteSummary, which can also freeze on a
@@ -141,7 +141,7 @@ class YfService:
             return 0
         yf_interval = YF_BAR_INTERVAL[interval]
         if interval == "OneDay":
-            # One TTL per (ticker, interval) — fetch a range wide enough for every
+            # One TTL per (ticker, interval), so fetch a range wide enough for every
             # caller (stock page wants ~2y for EMA200/52w; valuation wants inception).
             start = min(start, date.today() - timedelta(days=800))
         else:
@@ -174,7 +174,7 @@ class YfService:
         async with self._sessions() as session:
             if interval != "OneDay":
                 # Replace the fetched span outright: Questrade-era hourly bars sit
-                # on the hour, Yahoo's on the half hour — upserting alone would
+                # on the hour and Yahoo's on the half hour, so upserting alone would
                 # interleave two grids on one chart.
                 await session.execute(delete(Candle).where(
                     Candle.ticker == ticker, Candle.interval == interval,
@@ -192,7 +192,7 @@ class YfService:
         return len(bars)
 
     async def quotes(self, yf_symbols: list[str]) -> dict[str, dict]:
-        """{yf_symbol: {"last", "prev_close", "session", "time"}} — cached QUOTE_TTL
+        """{yf_symbol: {"last", "prev_close", "session", "time"}}, cached QUOTE_TTL
         while US trading can move prices, QUOTE_TTL_CLOSED otherwise; failures
         serve the cached quote (or omit the symbol) so the dashboard never 500s.
         `session` is "post"/"pre" when `last` is an extended-hours trade, else None;
@@ -326,7 +326,7 @@ class YfService:
             s = yf.Ticker(yf_symbol).splits
             return {ts.date(): float(v) for ts, v in s.items()} if s is not None else {}
 
-        # Expires, so a split while the app runs reaches the walk — daily bars
+        # Expires, so a split while the app runs reaches the walk. Daily bars
         # re-adjust on their own refresh, and adjusted closes against unscaled
         # quantities would misvalue every pre-split day.
         try:

@@ -1,6 +1,6 @@
 ---
 name: verify-qtfolio
-description: Launch an isolated qtfolio instance (FastAPI backend + Vite React UI, scratch SQLite DB, fake $HOME) and drive the real web UI in headless Chrome to prove a change works — importing Wealthsimple exports, Dashboard holdings, Performance, stock charts, TFSA room. Use whenever you need evidence that a qtfolio feature behaves correctly end to end, not just that pytest passes.
+description: Launch an isolated qtfolio instance (FastAPI backend + Vite React UI, scratch SQLite DB, fake $HOME) and drive the real web UI in headless Chrome to prove a change works. Covers importing Wealthsimple exports, Dashboard holdings, Performance, stock charts, TFSA room. Use whenever you need evidence that a qtfolio feature behaves correctly end to end, not just that pytest passes.
 ---
 
 # Verify qtfolio
@@ -55,7 +55,7 @@ It is read-only. It checks that both pids are alive, that each port's listener i
 
 Ready-made journeys live in `journeys/`. Copy one as the template for a new journey. Stable handles in this UI:
 
-- Section headings are real `<h2>` elements: `Holdings`, `Allocation`, `TFSA room · <year>`, `P&L by position`, `Position`, `Levels`, plus Settings panels such as `Wealthsimple — import activities`, `Tracked accounts`, `Sync`, `TFSA contribution room`, `Backups`, and `Diagnostics`. Scope with `page.locator("section", { has: page.getByRole("heading", { name: "…" }) })`.
+- Section headings are real `<h2>` elements: `Holdings`, `Allocation`, `TFSA room · <year>`, `P&L by position`, `Position`, `Levels`, plus Settings panels such as `Import Wealthsimple activities`, `Tracked accounts`, `Sync`, `TFSA contribution room`, `Backups`, and `Diagnostics`. Scope with `page.locator("section", { has: page.getByRole("heading", { name: "…" }) })`.
 - Left-rail nav is links named `Dashboard`, `Performance`, `Settings`. Stock pages live at `/stocks/<TICKER>`; clicking a holdings row also opens one.
 - Buttons are named by visible text, such as `Import N rows`, `Run now`, `Record`, `Save`, `CAD`, `USD`, and range buttons `1M` `3M` `6M` `1Y` `ALL`.
 - Inputs have no labels. Use their placeholders (`Go to symbol…`, `Room (CAD)`, `Amount (CAD)`, `Institution`) or the single `input[type="file"]` in the import card.
@@ -74,7 +74,7 @@ qtv sql "SELECT account_id, type, ticker, qty_micro, net_amount_cents FROM activ
 qtv drop-export [path/to/export.csv]   # default: fixtures/ws-activities-synthetic.csv
 ```
 
-The only seed data is `fixtures/ws-activities-synthetic.csv`, a synthetic TFSA `VERIFY1` with deposits of $10,000 and $500 CAD and buys of 100 XEQT @ $33.00 and 20 SHOP @ $150.00 (CAD, so they import as `XEQT.TO` and `SHOP.TO`). Cash after import is exactly **$4,200.00 CAD**. **Never put real exports, balances, or CRA room in fixtures, journeys, or this skill**, because the repo is public.
+Seed data is `fixtures/ws-activities-synthetic.csv` (and, for P&L numbers, `fixtures/ws-activities-cash-lines.csv`, see `features/performance.md`). The default is a synthetic TFSA `VERIFY1` with deposits of $10,000 and $500 CAD and buys of 100 XEQT @ $33.00 and 20 SHOP @ $150.00 (CAD, so they import as `XEQT.TO` and `SHOP.TO`). Cash after import is exactly **$4,200.00 CAD**. **Never put real exports, balances, or CRA room in fixtures, journeys, or this skill**, because the repo is public.
 
 ## Evidence
 
@@ -85,7 +85,8 @@ Proof standards:
 - Exercise the real user path: the UI upload card, the Downloads drop, and visible buttons. Do not call internal functions or set state directly. Use `qtv sql`/`qtv api` to *observe*, not to set up what the feature should have produced.
 - Capture the action and the resulting state (one `step` per action), not just the final screen.
 - Verify side effects as well as the screen: rows in `activities`/`accounts`/`series_daily` (`qtv sql`), `wealthsimple.last_import` and job runs in `/api/health`, and lines like `auto-imported … N new` in the backend log.
-- Live prices change. Assert on deterministic facts (tickers, qty, avg cost, cash $4,200, row counts, date ranges), never on `Last`, P&L, or totals.
+- Live prices change. Assert on deterministic facts (tickers, qty, avg cost, cash $4,200, row counts, date ranges), never on `Last` or an absolute P&L or total.
+- Numbers are still checkable. Identities hold whatever the price (lines sum to their total, row P&L = value now + sold − bought), so assert them to the cent. Cash-only lines (interest, fees, conversion cost, dividends) are fixed by the fixture and the instance's `fx_rates`, so recompute them by hand and compare. A screen that renders but does not add up is a failed run.
 - No mocks. Yahoo is a real production dependency here. If Yahoo is down, the run fails; say so instead of faking it.
 - Record which entry point you drove. Proving the upload path does not prove the watcher path.
 

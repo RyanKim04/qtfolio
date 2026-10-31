@@ -1,4 +1,4 @@
-"""TFSA contribution room (services/tfsa.py) on a synthetic history — the
+"""TFSA contribution room (services/tfsa.py) on a synthetic history. The
 owner's real history (reproducing CRA's confirmed room) lives in the gitignored
 test_tfsa_private.py."""
 
@@ -43,7 +43,7 @@ def test_history_never_overcontributed():
 def test_remaining_after_wealthsimple_contribution():
     years = {r.year: r for r in from_inception(DEFAULT_LIMITS, HISTORY + [WS_2026], 2026)}
     assert years[2026].end_cents == 1_700_000
-    # The anchored walk agrees — and ignores pre-anchor rows already inside the anchor.
+    # The anchored walk agrees, and ignores pre-anchor rows already inside the anchor.
     for txns in ([WS_2026], HISTORY + [WS_2026]):
         s = summarize(TODAY, 2026, CRA_JAN1_2026, DEFAULT_LIMITS, txns)
         assert s["remaining_cents"] == 1_700_000

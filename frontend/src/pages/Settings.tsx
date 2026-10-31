@@ -40,7 +40,7 @@ function ImportCard() {
   const watch = health.data?.wealthsimple?.watch;
   const p = preview.data;
   return (
-    <Panel title="Wealthsimple — import activities">
+    <Panel title="Import Wealthsimple activities">
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -55,9 +55,9 @@ function ImportCard() {
         className={`space-y-2 rounded-md text-[13px] ${dragging ? "outline-2 outline-dashed outline-accent" : ""}`}
       >
         <p className="text-muted">
-          Just download the export in Wealthsimple (Activity → Download activities → CSV) — it is picked up from{" "}
-          <span className="num">{watch?.dir ?? "~/Downloads"}</span> within seconds and imported automatically. Overlapping
-          or repeated exports are safe; duplicates are skipped. You can also drop a file here.
+          In Wealthsimple, go to Activity → Download activities → CSV. Any export saved to{" "}
+          <span className="num">{watch?.dir ?? "~/Downloads"}</span> imports within a few seconds, and rows already
+          imported are skipped. You can also drop a file here.
         </p>
         {watch?.error && <p className="text-[12px] text-down">Auto-import paused: {watch.error}</p>}
         <div className="num text-[12px] text-muted">
@@ -180,8 +180,8 @@ function TfsaSettings() {
   return (
     <div className="space-y-3 text-[13px]">
       <p className="text-muted">
-        Room is per person across every institution. The dashboard works forward from CRA's confirmed Jan 1 room
-        (CRA My Account → TFSA) using the transactions you record for that year onward.
+        TFSA room is per person, across all institutions. The dashboard starts from CRA's Jan 1 room (CRA My
+        Account → TFSA) and applies the transactions you record from that year on.
       </p>
       <div>
         <div className="text-[11px] uppercase tracking-wide text-muted">CRA-confirmed room on Jan 1</div>
@@ -199,7 +199,7 @@ function TfsaSettings() {
       </div>
       <div>
         <div className="text-[11px] uppercase tracking-wide text-muted">
-          Annual limits — blank = not announced yet (usually November)
+          Annual limits (leave blank until announced, usually in November)
         </div>
         <div className="mt-1 grid grid-cols-4 gap-2">
           {years.map((y) => (
@@ -251,7 +251,7 @@ export function Settings() {
   const accounts = settingsData.data?.accounts ?? [];
   const warnings = health.data?.warnings ?? [];
   const benchmarksValue =
-    benchmarks ?? ((settingsData.data?.settings.benchmarks as string[]) ?? ["QQQ", "SMH", "SPY"]).join(", ");
+    benchmarks ?? ((settingsData.data?.settings.benchmarks as string[]) ?? ["QQQ", "SMH", "SPY", "XEQT.TO"]).join(", ");
 
   const saveBenchmarks = async () => {
     const list = benchmarksValue.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -265,7 +265,7 @@ export function Settings() {
       {ob && !ob.has_history && (
         <div className="rounded-lg border border-accent/30 bg-accent-soft px-4 py-3 text-[13px]">
           <p className="font-medium text-accent">Set up qtfolio</p>
-          <p className="mt-1 text-muted">Import a Wealthsimple activities export below — history builds from it.</p>
+          <p className="mt-1 text-muted">Import a Wealthsimple activities export below to build your history.</p>
         </div>
       )}
 
@@ -275,13 +275,13 @@ export function Settings() {
             Reconciliation notes ({warnings.length})
           </p>
           <p className="mt-0.5 text-[12px] text-muted">
-            Anything the reconstruction couldn't fully explain is listed here — with how it was handled —
-            instead of being silently adjusted. Nothing to do unless a note looks wrong to you.
+            Events the history rebuild couldn't fully explain, and how each one was handled. No action needed
+            unless a note looks wrong.
           </p>
           <ul className="mt-2 max-h-40 space-y-0.5 overflow-auto text-[12px]">
             {warnings.slice(0, 20).map((w, i) => (
               <li key={i} className="num text-muted">
-                {w.date ?? "—"} {w.ticker ? `· ${w.ticker}` : ""} — {w.message}
+                {w.date ?? "—"} {w.ticker ? `· ${w.ticker} ` : ""}· {w.message}
               </li>
             ))}
           </ul>
@@ -292,7 +292,7 @@ export function Settings() {
 
       <Panel title="Tracked accounts">
         {accounts.length === 0 ? (
-          <p className="text-[13px] text-muted">No accounts yet — import an export above.</p>
+          <p className="text-[13px] text-muted">No accounts yet. Import an export above.</p>
         ) : (
           <ul className="space-y-1">
             {accounts.map((a) => (
@@ -341,8 +341,8 @@ export function Settings() {
           })}
         </div>
         <p className="mt-2 text-[11px] text-muted">
-          Jobs run automatically: overdue jobs execute at every backend start, on their cron schedule while the
-          process is alive, and an hourly catch-up sweep retries anything that failed or was missed.
+          Overdue jobs run when the backend starts, then on their cron schedule. Every hour, any job that failed or
+          was missed runs again.
         </p>
       </Panel>
 
@@ -360,8 +360,8 @@ export function Settings() {
       <Panel title="Backups">
         <div className="flex items-center gap-3 text-[13px]">
           <span className="text-muted">
-            Weekly SQLite backup to <span className="num">data/backups/</span> (keeps 8). Offsite copies are manual —
-            drag one to Drive occasionally.
+            Weekly SQLite backup to <span className="num">data/backups/</span>, keeping the last 8. Nothing is copied
+            offsite, so copy a backup to Drive yourself.
           </span>
           <button
             onClick={() => runJob.mutate("db_backup")}

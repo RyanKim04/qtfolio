@@ -1,11 +1,11 @@
-"""Downloads watcher — the Wealthsimple export imports itself.
+"""Downloads watcher: imports any Wealthsimple export saved to ~/Downloads.
 
 Owner decision 2026-10-30: CSV stays the only WS source (the unofficial API
 was tried and rolled back), so the manual part is cut to "download the export
 in Wealthsimple". WS saves it as ~/Downloads/activities-export-YYYY-MM-DD.csv
 (" (1)" on a same-day re-download); this loop polls the folder, recognizes any
 CSV by its header (is_ws_export, not the name) and commits it through the same
-dedup as an upload — overlapping or repeated exports add nothing.
+dedup as an upload, so overlapping or repeated exports add nothing.
 
 Files are never moved or deleted. Seen content digests persist in settings
 (`ws_watch_seen`), so a restart doesn't re-read old exports; one that is new
@@ -37,7 +37,7 @@ class Watcher:
         self.dir = directory
         self.error: str | None = None  # the scan itself failed (e.g. no folder permission)
         self._stat: dict[Path, tuple[float, int]] = {}  # files already looked at, by (mtime, size)
-        self._failed: dict[Path, str] = {}  # exports whose import failed — retried every scan
+        self._failed: dict[Path, str] = {}  # exports whose import failed; retried every scan
         self._seen: list[str] = []
 
     def status(self) -> dict:
@@ -80,7 +80,7 @@ class Watcher:
             except Exception as e:
                 # Not marked looked-at, so the next scan retries (a locked DB clears
                 # itself); the error stays up until this file imports. Logged once
-                # per distinct failure — a broken file would otherwise log every scan.
+                # per distinct failure, since a broken file would otherwise log every scan.
                 msg = str(e).splitlines()[0]  # SQLAlchemy appends the SQL + parameters
                 if self._failed.get(path) != msg:
                     log.exception("auto-import of %s failed; retrying each scan", path.name)

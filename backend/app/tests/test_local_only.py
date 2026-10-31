@@ -12,7 +12,7 @@ async def _post(base_url, headers=None):
 
 
 async def test_local_requests_reach_the_route():
-    # 422 = the route's own validation (no file) — the guards let it through.
+    # 422 is the route's own validation (no file), so the guards let it through.
     assert (await _post("http://127.0.0.1:8000")).status_code == 422
     assert (await _post("http://127.0.0.1:8000", {"origin": "http://127.0.0.1:5173"})).status_code == 422
     assert (await _post("http://localhost:5173", {"origin": "http://localhost:5173"})).status_code == 422

@@ -5,8 +5,8 @@ data/
 # personal exports (real account data)
 misc/
 
-# personal financial data (real balances, contribution history, account ids) —
-# the repo is public: anything named *_private.* or under a private/ dir stays local
+# Personal financial data (real balances, contribution history, account ids).
+# The repo is public, so anything named *_private.* or under a private/ dir stays local.
 *_private.*
 private/
 

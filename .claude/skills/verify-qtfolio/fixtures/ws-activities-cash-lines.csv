@@ -1,0 +1,13 @@
+effective_date,effective_time,settlement_date,account_id,account_type,activity_type,activity_sub_type,description,direction,symbol,name,currency,quantity,unit_price,commission,net_cash_amount
+2026-06-01,10:00:00,,VERIFY2,TFSA,MoneyMovement,EFT,Deposit,,,,CAD,10000,,,10000
+2026-06-02,10:30:00,2026-06-03,VERIFY2,TFSA,Trade,BUY,"XEQT - iShares Core Equity ETF Portfolio: Bought 100.0000 shares",LONG,XEQT,iShares Core Equity ETF Portfolio,CAD,100,33.00,0,-3300.00
+2026-06-03,09:00:00,,VERIFY2,TFSA,FxExchange,-,"Convert CAD (executed at 2026-06-03) - $1USD = $1.40CAD",,,,CAD,-2800.00,,,-2800.00
+2026-06-03,09:00:00,,VERIFY2,TFSA,FxExchange,-,"Convert USD (executed at 2026-06-03) - $1USD = $1.40CAD",,,,USD,2000.00,,,2000.00
+2026-06-04,10:30:00,2026-06-05,VERIFY2,TFSA,Trade,BUY,"MSFT - Microsoft Corp.: Bought 4.0000 shares",LONG,MSFT,Microsoft Corp.,USD,4,450.00,0,-1800.00
+2026-07-10,09:00:00,,VERIFY2,TFSA,Dividend,-,"MSFT - Microsoft Corp.: Cash dividend distribution",,MSFT,Microsoft Corp.,USD,3.32,,,3.32
+2026-07-10,09:00:00,,VERIFY2,TFSA,Tax,NRT,"Non-resident tax (executed at 2026-07-10)",,,,USD,-0.50,,,-0.50
+2026-08-03,09:00:00,,VERIFY2,TFSA,Fee,SERVICE_FEE,"Service fee (executed at 2026-08-03)",,,,CAD,-25.00,,,-25.00
+2026-08-04,09:00:00,,VERIFY2,TFSA,AdministrativePayment,TRANSFER_FEE_REIMBURSEMENT,"CAD credited (executed at 2026-08-04)",,,,CAD,30.00,,,30.00
+2026-09-01,09:00:00,,VERIFY2,TFSA,FxExchange,-,"Convert USD (executed at 2026-09-01) - $1USD = $1.36CAD",,,,USD,-100.00,,,-100.00
+2026-09-01,09:00:00,,VERIFY2,TFSA,FxExchange,-,"Convert CAD (executed at 2026-09-01) - $1USD = $1.36CAD",,,,CAD,136.00,,,136.00
+2026-09-30,09:00:00,,VERIFY2,TFSA,Interest,-,"Interest earned",,,,CAD,1.23,,,1.23

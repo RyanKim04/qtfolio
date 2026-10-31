@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from app.services.series import (
     apply_ground_truth,
+    conversion_cost_series,
     fx_translation_series,
     range_stats,
     twr_index,
@@ -44,8 +45,33 @@ def test_fx_translation_counts_usd_cash():
     assert out[D[1]] == 500_00 * (1_350_000 - 1_400_000) // M  # negative FX (−$25.00)
 
 
+def _fx_leg(d, cur, cents):
+    return {"transaction_date": d, "type": "fx conversion", "action": "fxt", "currency": cur, "net_amount_cents": cents}
+
+
+def test_conversion_cost_is_spread_vs_market_rate():
+    # Market 1.38. Buy US$1000 for C$1400 (broker rate 1.40): cost = 1000×1.38 − 1400 = −$20.
+    # Later sell US$500 for C$680 (broker 1.36 vs market 1.38): another −$10.
+    fx = {D[0]: 1_380_000}
+    acts = [
+        _fx_leg(D[1], "CAD", -1400_00), _fx_leg(D[1], "USD", 1000_00),
+        _fx_leg(D[3], "USD", -500_00), _fx_leg(D[3], "CAD", 680_00),
+        {"transaction_date": D[2], "type": "trades", "action": "buy", "currency": "USD", "net_amount_cents": -900_00},
+    ]
+    out = conversion_cost_series(acts, fx, D[:5])
+    assert out[D[0]] == 0 and out[D[1]] == -20_00 and out[D[2]] == -20_00  # trades don't count
+    assert out[D[3]] == out[D[4]] == -30_00
+
+
+def test_conversion_cost_window_starts_after_first_date():
+    # A conversion on the first series date predates the window; cum starts at 0 there.
+    acts = [_fx_leg(D[0], "CAD", -1400_00), _fx_leg(D[0], "USD", 1000_00)]
+    out = conversion_cost_series(acts, {D[0]: 1_380_000}, D[:2])
+    assert out == {D[0]: 0, D[1]: 0}
+
+
 def test_twr_day_one_deposit_is_well_defined():
-    # Empty account, $10k deposited on day 1 — the deposit sits in the denominator.
+    # Empty account, $10k deposited on day 1. The deposit sits in the denominator.
     values = {D[0]: 0, D[1]: 10_000_00, D[2]: 11_000_00}
     flows = {D[1]: 10_000_00}
     idx, warnings = twr_index(values, flows)
@@ -118,7 +144,7 @@ def test_range_stats_drawdown_and_best_worst():
 
 
 def test_xirr_mwr_sane():
-    # $100 at start, deposit $100 halfway, $220 at end — MWR should be positive and modest.
+    # $100 at start, deposit $100 halfway, $220 at end. MWR should be positive and modest.
     dates = [date(2024, 1, 1), date(2024, 7, 1), date(2024, 12, 31)]
     values = {dates[0]: 100_00, dates[1]: 205_00, dates[2]: 220_00}
     idx = {dates[0]: 100.0, dates[1]: 102.0, dates[2]: 108.0}

@@ -1,12 +1,12 @@
-"""TFSA contribution room — one person, summed across every institution.
+"""TFSA contribution room for one person, summed across every institution.
 
 CRA rules this module encodes:
 - A contribution uses room the moment it lands.
-- A withdrawal gives its room back on Jan 1 of the NEXT year — never the same year.
+- A withdrawal gives its room back on Jan 1 of the next year, never the same year.
 - Trades inside the account don't touch room, and a direct institution-to-
   institution transfer (type "transfer") is neither a contribution nor a withdrawal.
 - Negative room = over-contribution, taxed 1% per month on the excess.
-- Room accrues from the year the holder turns 18 — the first year of the limits table.
+- Room accrues from the year the holder turns 18, the first year of the limits table.
 
 The live figure walks forward from an anchor (CRA's confirmed Jan 1 room for some
 year) using only transactions dated in or after that year. `from_inception` walks
@@ -46,7 +46,7 @@ class Txn:
 class YearRoom:
     year: int
     limit_cents: int
-    limit_provisional: bool  # limit TBA — the latest known one stands in
+    limit_provisional: bool  # limit not announced; the latest known one is used
     jan1_cents: int
     contributed_cents: int = 0
     withdrawn_cents: int = 0
@@ -139,13 +139,13 @@ def summarize(today: date, anchor_year: int, anchor_cents: int,
 def check(candidate: Txn, anchor_year: int, anchor_cents: int,
           limits: dict[int, int | None], txns: list[Txn], today: date) -> dict:
     """Warnings for recording `candidate`: {"warnings": [{level, code, message}],
-    "year", "room_after_cents"} — levels danger | warning | info."""
+    "year", "room_after_cents"}. Levels are danger | warning | info."""
     y = candidate.date.year
     if y < anchor_year:
         return {"year": y, "room_after_cents": None, "warnings": [{
             "level": "info", "code": "before_anchor",
-            "message": f"Dated before the {anchor_year} anchor — CRA's Jan 1, {anchor_year} room already "
-                       f"reflects it, so the numbers won't change.",
+            "message": f"Dated before the {anchor_year} anchor. CRA's Jan 1, {anchor_year} room already "
+                       f"includes it, so the numbers won't change.",
         }]}
     through = max(_through(today, txns), y)
     before = {r.year: r for r in walk(anchor_year, anchor_cents, limits, txns, through)}
@@ -158,7 +158,7 @@ def check(candidate: Txn, anchor_year: int, anchor_cents: int,
         return out
     if candidate.type == WITHDRAWAL:
         warnings.append({"level": "info", "code": "withdrawal",
-                         "message": f"This room comes back on Jan 1, {y + 1} — not this year."})
+                         "message": f"This room comes back on Jan 1, {y + 1}, not this year."})
         return out
 
     # Contribution. Adding room use in year y can also push a later year with
@@ -180,8 +180,8 @@ def check(candidate: Txn, anchor_year: int, anchor_cents: int,
     if withdrawn:
         warnings.append({
             "level": "danger" if over else "warning", "code": "recontribution",
-            "message": f"You withdrew {withdrawn / 100:,.2f} earlier in {y}. Withdrawals only come back as room "
-                       f"on Jan 1, {y + 1} — re-contributing now uses this year's room "
+            "message": f"You withdrew {withdrawn / 100:,.2f} earlier in {y}. Withdrawals come back as room "
+                       f"on Jan 1, {y + 1}, so re-contributing now uses this year's room "
                        f"({before[y].end_cents / 100:,.2f} left).",
         })
     return out

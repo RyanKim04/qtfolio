@@ -2,14 +2,14 @@
 
 Anchors at a known EOD state (live snapshot) and walks activities newest →
 oldest, reversing each. Correct for exactly the window the data covers; the
-residual state at the window edge IS the opening balance. Pure functions — the
-test_reconstruction fixtures drive this directly.
+residual state at the window edge is the opening balance. Pure functions; the
+test_reconstruction fixtures call them directly.
 
 Sign conventions (forward semantics; reversal subtracts):
 - qty: buys/DRIP/journal-in positive, sells/journal-out negative (micro-shares)
 - net_amount_cents: Questrade's sign (buy negative, sell/dividend positive)
 - flows: deposits positive, withdrawals negative, recorded at their own dates
-  with un-reversed sign — the only rows that count as contributions.
+  with un-reversed sign. These are the only rows that count as contributions.
 """
 
 import logging
@@ -59,7 +59,7 @@ def classify(row: dict) -> str:
     if t == "other" and row.get("ticker") and row.get("qty_micro"):
         return "journal"
     # DECISION: a symbol-less, quantity-less "Other" row is a cash-only charge
-    # (Questrade posts HST on the transfer-out fee this way) — fee semantics, no flow.
+    # (Questrade posts HST on the transfer-out fee this way). Treat it as a fee, not a flow.
     if t == "other" and not row.get("qty_micro") and row.get("net_amount_cents"):
         return "fee"
     return "unknown"
@@ -144,7 +144,7 @@ def walk_backward(
         res.skipped_split_journal_ids = sorted(paired_ids)
 
     # Back-adjusted regime: the whole walk stays in today's units, but activity
-    # rows are posted in date-native units — a pre-split buy of 100 is 200
+    # rows are posted in date-native units: a pre-split buy of 100 is 200
     # today-units after a 2:1. running_factor[t] = Π factors of splits AFTER the
     # current walk date; rows dated ON the split date are already post-split.
     running_factor: dict[str, float] = {t: 1.0 for t in splits}
@@ -162,7 +162,7 @@ def walk_backward(
         for t, q in qty.items():
             if q < 0:
                 res.warnings.append({"date": d.isoformat(), "ticker": t,
-                                     "message": f"negative quantity {q / 1e6:g} at {d} — missing older history or unhandled corporate action"})
+                                     "message": f"negative quantity {q / 1e6:g} at {d}, from missing older history or an unhandled corporate action"})
 
         # Reverse day d's activities.
         for r in by_day.get(d, []):
@@ -190,8 +190,8 @@ def walk_backward(
             sq = signed_qty_micro(r, kind)
             if kind == "trade" and sq and not ticker:
                 res.warnings.append({"date": d.isoformat(), "ticker": None,
-                                     "message": f"trade row without a symbol (id={r.get('id')}) — its share "
-                                                "quantity cannot be tracked and was ignored"})
+                                     "message": f"trade row without a symbol (id={r.get('id')}); its share "
+                                                "quantity was ignored"})
             if regime == BACK_ADJUSTED and ticker in running_factor and sq:
                 sq = round(sq * running_factor[ticker])
             if kind in ("trade", "journal", "dividend") and ticker and sq:
@@ -199,7 +199,7 @@ def walk_backward(
             cash[cur] = cash.get(cur, 0) - net
 
         # Crossing a split date going back (i.e. moving from the split date to
-        # the day before it): unadjusted quantities become date-native — unless
+        # the day before it): unadjusted quantities become date-native, unless
         # broker journals already did the conversion; back-adjusted walks bump
         # the running unit-conversion factor instead.
         for ticker, tsplits in splits.items():
@@ -219,7 +219,7 @@ def walk_backward(
     for t, q in res.opening_qty.items():
         if q < 0:
             res.warnings.append({"date": earliest.isoformat(), "ticker": t,
-                                 "message": f"opening quantity {q / 1e6:g} is negative — history incomplete before {earliest}"})
+                                 "message": f"opening quantity {q / 1e6:g} is negative, so history before {earliest} is incomplete"})
     return res
 
 
@@ -230,8 +230,8 @@ def match_transfers(activities: list[dict]) -> tuple[list[dict], list[dict]]:
     """Broker-to-broker transfers (Questrade TFO → Wealthsimple SecurityTransfer,
     and the cash legs that settle the fee/residual balances) between TRACKED
     accounts are internal: zero external flow, and the two legs must land on the
-    SAME day or the aggregate ledger double-counts (or drops) the assets while
-    they are in transit. Matched pairs are re-dated to the later leg — the
+    same day, or the aggregate ledger double-counts (or drops) the assets while
+    they are in transit. Matched pairs are re-dated to the later leg, so the
     assets stay where they were until they arrive.
 
     Unmatched legs came from / went to an untracked institution: a cash leg is
@@ -285,11 +285,11 @@ def match_transfers(activities: list[dict]) -> tuple[list[dict], list[dict]]:
             r["type"] = "deposits" if r["net_amount_cents"] > 0 else "withdrawals"
             warnings.append({"date": d, "ticker": None,
                              "message": f"cash transfer {r['net_amount_cents'] / 100:+.2f} {r.get('currency')} has no "
-                                        "counterpart in a tracked account — counted as an external deposit/withdrawal"})
+                                        "counterpart in a tracked account, so it counts as an external deposit or withdrawal"})
         else:
             warnings.append({"date": d, "ticker": r["ticker"],
                              "message": f"in-kind transfer of {r['qty_micro'] / 1e6:g} sh has no counterpart in a "
-                                        "tracked account — its value enters/leaves without a capital-in flow"})
+                                        "tracked account, so its value enters or leaves without a capital-in flow"})
     return rows, warnings
 
 

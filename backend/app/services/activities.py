@@ -5,11 +5,11 @@ the typed-field tuple plus an occurrence index within each identical-tuple group
 per (account, day); re-importing an overlapping export regenerates the same
 hashes, so INSERT OR IGNORE yields multiset semantics (counts per tuple, never
 set membership). Stored hashes (Questrade API/CSV era included) were built with
-these exact rules — changing tuple_key would break dedup against them.
+these exact rules, so changing tuple_key would break dedup against them.
 
 DECISION: the description is EXCLUDED from the hash tuple. Rationale: sources
 phrase descriptions differently, and cross-source dedup must collapse the same
-activity from both. Two genuinely distinct same-day rows that differ only in
+activity from both. Two distinct same-day rows that differ only in
 description still survive, because they occupy distinct occurrence indices
 within the same tuple group.
 """
@@ -83,9 +83,9 @@ def parse_date(v) -> date | None:
 
 
 def _is_dividend_row(row: dict) -> bool:
-    """Dividend / DRIP income. Questrade returns the SAME payment under a clean
+    """Dividend / DRIP income. Questrade returns the same payment under a clean
     ticker or an internal registry key (e.g. QQQM vs H082968, TQQQ vs P025429)
-    with cosmetically different descriptions and a sometimes-missing trade_date —
+    with slightly different descriptions and a sometimes-missing trade_date,
     so keeping the symbol in the dedup key lets one dividend land twice (learned
     2026-09-21: QQQM/TQQQ dividends double-counted after a post-API-key re-sync)."""
     t = (row.get("type") or "").lower()
@@ -96,7 +96,7 @@ def tuple_key(row: dict) -> tuple:
     """Typed-field identity for dedup. Description deliberately excluded (see
     module doc). Date basis = trade_date when present, else transaction_date:
     the API posts trades at T+1 (transactionDate) while the web export stamps
-    the trade day itself — the same fill must produce the same key from both.
+    the trade day itself. The same fill must produce the same key from both.
     Dividends dedup symbol-free (account+date+amount+currency identifies the cash
     event); the symbol is unreliable and would defeat cross-symbol dedup. Two real
     same-day same-amount dividends from different stocks still survive via distinct
@@ -119,7 +119,7 @@ def tuple_key(row: dict) -> tuple:
 
 
 def assign_hashes(rows: list[dict]) -> list[dict]:
-    """Occurrence-indexed hashes. Must be called with complete days — a calendar
+    """Occurrence-indexed hashes. Must be called with complete days: a calendar
     day must never be split across two calls, or occurrence indices drift."""
     seen: dict[tuple, int] = {}
     out = []
@@ -133,7 +133,7 @@ def assign_hashes(rows: list[dict]) -> list[dict]:
 
 
 async def upsert_activities(sessions: async_sessionmaker, rows: list[dict]) -> int:
-    """Multiset-aware insert; returns the number of genuinely new rows."""
+    """Multiset-aware insert; returns the number of new rows."""
     if not rows:
         return 0
     new = 0

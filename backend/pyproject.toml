@@ -1,7 +1,7 @@
 [project]
 name = "qtfolio-backend"
 version = "0.1.0"
-description = "qtfolio backend — local portfolio terminal"
+description = "qtfolio backend: local portfolio terminal"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",

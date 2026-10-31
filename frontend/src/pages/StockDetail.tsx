@@ -8,12 +8,18 @@ import { fmtMoney, fmtNum, fmtPct, fmtQty, fmtSignedMoney, pnlClass } from "../l
 const INTERVALS = ["5m", "15m", "1h", "1d", "1w"];
 const DEFAULT_TOGGLES: IndicatorToggles = { ema: true, bb: false, vwap: false, avwap: false, rsi: false, macd: false };
 
-function Chip({ on, label, onClick, disabled }: { on: boolean; label: string; onClick: () => void; disabled?: boolean }) {
+function Chip({ on, label, onClick, disabled, disabledTitle }: {
+  on: boolean;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  disabledTitle?: string;
+}) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      title={disabled ? "Intraday intervals only" : undefined}
+      title={disabled ? disabledTitle : undefined}
       className={`rounded-full border px-2.5 py-0.5 text-[11px] ${
         on ? "border-accent bg-accent-soft font-medium text-accent" : disabled ? "cursor-not-allowed border-border text-border" : "border-border text-muted hover:text-text"
       }`}
@@ -96,8 +102,8 @@ export function StockDetail() {
         <div className="flex gap-1.5">
           <Chip on={toggles.ema} label="EMA 20/50/200" onClick={() => flip("ema")} />
           <Chip on={toggles.bb} label="Bollinger" onClick={() => flip("bb")} />
-          <Chip on={toggles.vwap} label="VWAP" onClick={() => flip("vwap")} disabled={!intraday} />
-          <Chip on={toggles.avwap} label="AVWAP (52w low)" onClick={() => flip("avwap")} disabled={intraday} />
+          <Chip on={toggles.vwap} label="VWAP" onClick={() => flip("vwap")} disabled={!intraday} disabledTitle="Intraday intervals only" />
+          <Chip on={toggles.avwap} label="AVWAP (52w low)" onClick={() => flip("avwap")} disabled={intraday} disabledTitle="Daily and weekly intervals only" />
           <Chip on={toggles.rsi} label="RSI" onClick={() => flip("rsi")} />
           <Chip on={toggles.macd} label="MACD" onClick={() => flip("macd")} />
         </div>
@@ -133,8 +139,10 @@ export function StockDetail() {
         <div className="p-2">
           {rs.data && !rs.data.empty ? (
             <MiniLineChart dates={rs.data.dates!} values={rs.data.values!} />
+          ) : rs.isLoading ? (
+            <p className="py-8 text-center text-[12px] text-muted">Loading…</p>
           ) : (
-            <p className="py-8 text-center text-[12px] text-muted">RS data unavailable.</p>
+            <p className="py-8 text-center text-[12px] text-muted">No relative strength data.</p>
           )}
         </div>
       </div>
@@ -154,7 +162,7 @@ export function StockDetail() {
               <Cell label="Trades" value={String(p.markers.length)} />
             </div>
           ) : (
-            <p className="p-4 text-[13px] text-muted">Not currently held{p && p.markers.length ? ` — ${p.markers.length} past trades shown on the daily chart` : ""}.</p>
+            <p className="p-4 text-[13px] text-muted">Not currently held.{p && p.markers.length ? ` ${p.markers.length} past trades are marked on the daily chart.` : ""}</p>
           )}
         </section>
 
@@ -167,7 +175,7 @@ export function StockDetail() {
               <Cell label="52w low" value={`${fmtMoney(levels.data.week52_low, cur)} (${fmtPct(levels.data.dist_from_low_pct)})`} />
               <Cell label="ATR(14)" value={fmtNum(levels.data.atr14)} />
               <Cell label="ATR %" value={fmtPct(levels.data.atr14_pct, false)} />
-              <Cell label="Currency" value={`${cur} · shown native (header ${currency})`} />
+              <Cell label="Currency" value={cur === currency ? cur : `${cur}, not converted to ${currency}`} />
             </div>
           ) : (
             <p className="p-4 text-[13px] text-muted">Loading…</p>
@@ -175,7 +183,6 @@ export function StockDetail() {
         </section>
       </div>
 
-      <p className="text-[11px] text-muted">Analyst consensus panel arrives with M5.</p>
     </div>
   );
 }

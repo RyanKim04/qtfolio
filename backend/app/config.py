@@ -23,5 +23,5 @@ settings = Settings()
 
 
 def utcnow() -> datetime:
-    """Naive UTC — the storage convention for every datetime column."""
+    """Naive UTC, the storage convention for every datetime column."""
     return datetime.now(timezone.utc).replace(tzinfo=None)

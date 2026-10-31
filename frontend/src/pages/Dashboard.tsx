@@ -24,10 +24,10 @@ export function Dashboard() {
     const err = (summary.error ?? holdings.error) as Error;
     return (
       <div className="card p-6 text-[13px]">
-        <p className="text-down">Could not load portfolio data.</p>
+        <p className="text-down">Couldn't load portfolio data.</p>
         <p className="mt-1 text-muted">{err?.message}</p>
         <p className="mt-2 text-muted">
-          Check data sources in{" "}
+          Check the jobs and data sources in{" "}
           <Link to="/settings" className="text-accent underline">
             Settings
           </Link>
@@ -59,12 +59,12 @@ export function Dashboard() {
       <div className="flex items-baseline justify-between gap-4">
         {fresh && fresh.ledger_accounts > 0 && (
           <p className="num text-[12px] text-muted">
-            Holdings as of Wealthsimple activity through {fresh.activity_through ?? "—"}
-            {fresh.last_import_at ? ` · imported ${fmtRelTime(fresh.last_import_at)}` : ""} · traded since?{" "}
+            Holdings use Wealthsimple activity through {fresh.activity_through ?? "—"}
+            {fresh.last_import_at ? `, imported ${fmtRelTime(fresh.last_import_at)}` : ""}. Traded since then?{" "}
             <a href="https://my.wealthsimple.com/app/activity" target="_blank" rel="noreferrer" className="text-accent underline">
-              Download a fresh export
+              Download a new export
             </a>{" "}
-            — it imports itself
+            and it imports automatically.
           </p>
         )}
         {s?.prices_as_of && (
@@ -72,9 +72,9 @@ export function Dashboard() {
             Prices as of {fmtEtTime(s.prices_as_of)}
             {s.price_session ? ` (${s.price_session === "post" ? "after-hours" : "pre-market"})` : ""}
             {s.quotes_live ? (
-              <span className="text-up"> · live, streaming</span>
+              <span className="text-up"> · streaming</span>
             ) : (
-              " · closed until 4:00 a.m. ET pre-market"
+              " · market closed, pre-market opens 4:00 a.m. ET"
             )}
           </p>
         )}

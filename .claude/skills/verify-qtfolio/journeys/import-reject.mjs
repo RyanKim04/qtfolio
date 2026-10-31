@@ -1,4 +1,4 @@
-// Feature: import-activities (reject + dedup, upload path) — a non-WS CSV shows the server's
+// Feature: import-activities (reject + dedup, upload path). A non-WS CSV shows the server's
 // 400 reason on the card; the WS fixture again previews and commits as all duplicates.
 // Needs an instance that already imported the fixture once (upload or watcher).
 // Run: qtv browse import-reject .claude/skills/verify-qtfolio/journeys/import-reject.mjs
@@ -8,7 +8,7 @@ const FIXTURE = fileURLToPath(new URL("../fixtures/ws-activities-synthetic.csv",
 const NOT_WS = fileURLToPath(new URL("../fixtures/not-ws.csv", import.meta.url));
 
 export default async ({ page, base, step, note }) => {
-  const card = () => page.locator("section", { has: page.getByRole("heading", { name: "Wealthsimple — import activities" }) });
+  const card = () => page.locator("section", { has: page.getByRole("heading", { name: "Import Wealthsimple activities" }) });
 
   await step("reject-non-ws", async () => {
     await page.goto(base + "/settings");

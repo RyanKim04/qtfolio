@@ -27,7 +27,7 @@ class Setting(Base):
 class Account(Base):
     __tablename__ = "accounts"
     # DECISION: the PK keeps its historical name; for Wealthsimple accounts it
-    # holds the WS account id (alphanumeric, not a QT number) — renaming would churn every query.
+    # holds the WS account id (alphanumeric, not a QT number). Renaming it would touch every query.
     qt_account_id: Mapped[str] = mapped_column(String, primary_key=True)
     type: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String)
@@ -49,8 +49,8 @@ class Symbol(Base):
 
 class Activity(Base):
     __tablename__ = "activities"
-    # DECISION: qty/price in integer micro-units (micro-units where
-    # sub-cent precision matters — fractional DRIP shares, sub-cent unit prices).
+    # DECISION: qty and price in integer micro-units, because sub-cent precision
+    # matters for fractional DRIP shares and sub-cent unit prices.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str] = mapped_column(String, index=True)
     hash: Mapped[str] = mapped_column(String, unique=True)
@@ -102,7 +102,7 @@ class FxRate(Base):
 
 class Candle(Base):
     __tablename__ = "candles"
-    # Chart series — floats are fine here.
+    # Chart series, so floats are fine here.
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
     interval: Mapped[str] = mapped_column(String, primary_key=True)
     ts: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
@@ -135,8 +135,9 @@ class SeriesDaily(Base):
     pnl_cad_cents: Mapped[int | None] = mapped_column(Integer)
     twr_index: Mapped[float | None] = mapped_column(Float)
     flows_cad_cents: Mapped[int | None] = mapped_column(Integer)
-    # Cumulative CAD gain/loss from USD/CAD moves on USD exposure (since inception).
-    # Investment P&L = pnl_cad_cents − fx_gain_cad_cents. See series.fx_translation_series.
+    # Cumulative CAD gain/loss from USD/CAD moves on USD exposure plus conversion
+    # spread (since inception). Investment P&L = pnl_cad_cents − fx_gain_cad_cents.
+    # See series.fx_translation_series and series.conversion_cost_series.
     fx_gain_cad_cents: Mapped[int | None] = mapped_column(Integer)
 
 
@@ -151,7 +152,7 @@ class JobRun(Base):
 
 
 class TfsaTransaction(Base):
-    """Hand-entered TFSA room ledger (services/tfsa.py) — every institution the
+    """Hand-entered TFSA room ledger (services/tfsa.py) covering every institution the
     owner has used, independent of the broker activities above."""
     __tablename__ = "tfsa_transactions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

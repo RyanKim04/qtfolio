@@ -39,7 +39,7 @@ def _session_date(epoch: int | None) -> date:
 def fill_aware_day_pnl(last: float, prev: float, qty: float, trades: list[tuple[float, float]]) -> float:
     """Day P&L of a position whose session trades are (signed qty, fill price):
     shares held at the previous close move from `prev`, shares traded today from
-    their fill — last·qty_now − prev·qty_at_open − net cash spent on today's trades."""
+    their fill: last·qty_now − prev·qty_at_open − net cash spent on today's trades."""
     qty_open = qty - sum(q for q, _ in trades)
     return last * qty - prev * qty_open - sum(q * p for q, p in trades)
 
@@ -68,7 +68,7 @@ class PortfolioService:
         cash = pos["cash"]
         total = self._to_display({c: mv[c] + cash[c] for c in mv}, currency, rate)
         day_pnl = self._to_display(day, currency, rate)
-        # Opening value + the session's deposits (start-of-day flows) — the same
+        # Opening value plus the session's deposits (start-of-day flows), the same
         # denominator as the TWR day return in series.twr_index.
         base = total - day_pnl
         stats = await self._header_stats(self._to_display({c: mv[c] + cash[c] for c in mv}, "CAD", rate))
@@ -140,7 +140,7 @@ class PortfolioService:
 
     async def allocation(self, by: str, currency: str) -> dict:
         if by == "sector":
-            # DECISION: sector allocation needs yfinance sector caching — arrives with M5's analyst sync.
+            # Not implemented: sector allocation would need cached yfinance sector data. The UI has no Sector tab.
             return {"by": by, "available": False, "slices": []}
         h = await self.holdings(currency)
         if h.get("empty"):
@@ -151,7 +151,7 @@ class PortfolioService:
             # holding's native listing currency (exposure, not denomination).
             label = r["ticker"] if by == "position" else r["currency"]
             slices[label] = slices.get(label, 0.0) + (r["market_value"] or 0.0)
-        # Cash slice keeps the donut summing to total equity — shown however small
+        # The cash slice keeps the donut summing to total equity. It shows however small
         # (a 0.3% sliver still answers "how much is in cash?").
         cash_value = h["total_equity"] - sum(slices.values())
         if cash_value >= 0.01:
@@ -222,7 +222,7 @@ class PortfolioService:
         return self._to_display(native, "CAD", rate)
 
     async def freshness(self) -> dict:
-        """How current the Wealthsimple ledger is — it only moves when a new
+        """How current the Wealthsimple ledger is. It only moves when a new
         activities export is imported."""
         from . import history
 
@@ -282,7 +282,7 @@ class PortfolioService:
 
     async def _recent_trades(self, tickers: list[str]) -> dict[str, list[tuple[date, float, float]]]:
         """ticker → [(trade date, signed qty, fill price)] over the last week of
-        tracked-account trades — enough to cover any quote's session day."""
+        tracked-account trades, enough to cover any quote's session day."""
         from . import history
 
         ids = await history.tracked_ids(self._sessions)
@@ -304,7 +304,7 @@ class PortfolioService:
         return out
 
     async def _last_closes(self, tickers: list[str]) -> dict[str, tuple[float | None, float | None]]:
-        """(latest, previous) cached daily close — the fallback when a quote is unavailable."""
+        """(latest, previous) cached daily close, the fallback when a quote is unavailable."""
         out = {}
         async with self._sessions() as session:
             for t in tickers:

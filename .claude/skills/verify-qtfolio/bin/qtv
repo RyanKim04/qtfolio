@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qtv — launch, inspect and tear down an ISOLATED qtfolio instance for verification.
+# qtv: launch, inspect and tear down an isolated qtfolio instance for verification.
 #
 #   qtv up                      start backend + Vite on free ports with a scratch DB and a fake $HOME
 #   qtv doctor                  read-only: is this instance ours, alive, isolated, and usable?
@@ -16,7 +16,7 @@ set -euo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
 QTV_ROOT="${TMPDIR:-/tmp}"; QTV_ROOT="${QTV_ROOT%/}/qtfolio-verify"
-EVIDENCE_ROOT="$REPO/data/verify-evidence"   # data/ is gitignored — evidence may show balances
+EVIDENCE_ROOT="$REPO/data/verify-evidence"   # data/ is gitignored; evidence may show balances
 PW_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/verify-qtfolio"
 PW_VERSION="1.52.0"
 
@@ -30,16 +30,16 @@ free_port() {  # first port in [$1, $1+100) with no listener
 
 load_run() {
   local id="${QTV_RUN:-}"
-  if [ -z "$id" ]; then [ -L "$QTV_ROOT/latest" ] || die "no run — 'qtv up' first"; id="$(basename "$(readlink "$QTV_ROOT/latest")")"; fi
+  if [ -z "$id" ]; then [ -L "$QTV_ROOT/latest" ] || die "no run; 'qtv up' first"; id="$(basename "$(readlink "$QTV_ROOT/latest")")"; fi
   RUN="$QTV_ROOT/$id"
-  [ -f "$RUN/state.env" ] || die "run $id has no state ($RUN/state.env) — already down?"
+  [ -f "$RUN/state.env" ] || die "run $id has no state ($RUN/state.env); already down?"
   # shellcheck disable=SC1091
   source "$RUN/state.env"
 }
 
 cmd_up() {
-  [ -x "$REPO/backend/.venv/bin/uvicorn" ] || die "backend venv missing — run 'make install'"
-  [ -x "$REPO/frontend/node_modules/.bin/vite" ] || die "frontend deps missing — run 'make install'"
+  [ -x "$REPO/backend/.venv/bin/uvicorn" ] || die "backend venv missing; run 'make install'"
+  [ -x "$REPO/frontend/node_modules/.bin/vite" ] || die "frontend deps missing; run 'make install'"
   RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
   RUN="$QTV_ROOT/$RUN_ID"
   EVIDENCE="$EVIDENCE_ROOT/$RUN_ID"
@@ -114,7 +114,7 @@ cmd_doctor() {
   check "GET /api/health 200 through the vite proxy" "curl -fsS http://127.0.0.1:$FRONTEND_PORT/api/health"
   echo "health:"; curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null \
     | "$REPO/backend/.venv/bin/python" -c 'import json,sys; h=json.load(sys.stdin); print("  onboarding", h["onboarding"], "· ws accounts", h["wealthsimple"]["accounts"], "· watch", h["wealthsimple"]["watch"]); [print("  job", j["name"], (j["last_run"] or {}).get("status"), (j["last_run"] or {}).get("detail")) for j in h["jobs"]]' || true
-  [ $ok = 1 ] && echo "DOCTOR OK" || { echo "DOCTOR FAILED — do not drive this instance"; exit 1; }
+  [ $ok = 1 ] && echo "DOCTOR OK" || { echo "DOCTOR FAILED: do not drive this instance"; exit 1; }
 }
 
 cmd_api() {  # qtv api GET /api/health [name] [curl args…]

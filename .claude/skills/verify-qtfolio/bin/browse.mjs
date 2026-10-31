@@ -1,4 +1,4 @@
-// Playwright journey runner for qtv — invoked as `qtv browse <journey> <script.mjs>`.
+// Playwright journey runner for qtv, invoked as `qtv browse <journey> <script.mjs>`.
 //
 // The journey script default-exports `async ({ page, base, step, shot, aria, note }) => {}`:
 //   page            Playwright Page (system Google Chrome, headless, 1440×900)
