@@ -1,4 +1,4 @@
-"""Activities: normalization helpers and multiset dedup — SPEC.md §4.2.
+"""Activities: normalization helpers and multiset dedup.
 
 Rows carry no stable IDs and two identical same-day fills are legal. The hash is
 the typed-field tuple plus an occurrence index within each identical-tuple group

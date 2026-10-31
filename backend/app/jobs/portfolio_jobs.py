@@ -1,4 +1,4 @@
-"""Scheduled jobs — SPEC.md §13: eod_snapshot (daily bars + recompute) and
+"""Scheduled jobs: eod_snapshot (daily bars + recompute) and
 db_backup. Each job is a small make_* factory.
 """
 

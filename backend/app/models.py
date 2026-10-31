@@ -1,4 +1,4 @@
-"""Full SPEC.md §5 schema. Conventions (§2, §5):
+"""The full schema. Conventions:
 
 - Money = INTEGER cents in the row's native currency; unit prices and share
   quantities = INTEGER micro-units (1e-6) where sub-cent / fractional precision
@@ -49,7 +49,7 @@ class Symbol(Base):
 
 class Activity(Base):
     __tablename__ = "activities"
-    # DECISION: qty/price in integer micro-units (spec §5 allows micro-units where
+    # DECISION: qty/price in integer micro-units (micro-units where
     # sub-cent precision matters — fractional DRIP shares, sub-cent unit prices).
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str] = mapped_column(String, index=True)
@@ -102,7 +102,7 @@ class FxRate(Base):
 
 class Candle(Base):
     __tablename__ = "candles"
-    # Chart series — floats are fine here per spec §2.
+    # Chart series — floats are fine here.
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
     interval: Mapped[str] = mapped_column(String, primary_key=True)
     ts: Mapped[datetime] = mapped_column(DateTime, primary_key=True)

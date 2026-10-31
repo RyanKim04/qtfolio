@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.post("/import/activities")
 async def import_activities(request: Request, file: UploadFile = File(...), commit: bool = Form(False)):
-    """Two-phase (§4.3): default parses and returns the preview + row-mapping
+    """Two-phase: default parses and returns the preview + row-mapping
     report; commit=true maps rows into `activities` (same multiset dedup) and
     triggers a recompute. Accepts the Wealthsimple activities export."""
     content = await file.read()

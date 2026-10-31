@@ -98,7 +98,7 @@ async def performance_series(
         return {**base, **(await _stacked(state, dates, m["ledger_end"], m["live_price"]))}
 
     # value mode. Two capital baselines:
-    #   range     (§7 default): V(range start) counts as capital → band = P&L earned in the window
+    #   range     (default): V(range start) counts as capital → band = P&L earned in the window
     #   inception (owner-requested): net deposits since data start → band = lifetime P&L, same line on every range
     cap_series, val_series, pnl_series = [], [], []
     stored = m["capital"]

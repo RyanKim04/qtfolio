@@ -1,9 +1,9 @@
-"""Backward portfolio reconstruction — SPEC.md §6.
+"""Backward portfolio reconstruction.
 
 Anchors at a known EOD state (live snapshot) and walks activities newest →
 oldest, reversing each. Correct for exactly the window the data covers; the
 residual state at the window edge IS the opening balance. Pure functions — the
-§7 test fixtures drive this directly.
+test_reconstruction fixtures drive this directly.
 
 Sign conventions (forward semantics; reversal subtracts):
 - qty: buys/DRIP/journal-in positive, sells/journal-out negative (micro-shares)
@@ -81,7 +81,7 @@ def detect_split_journal_pairs(
 ) -> list[tuple[str, int, int, date, float]]:
     """Broker-posted split journals: same ticker, out-row + in-row near a known
     split date, in ≈ -out × factor. Must not be double-applied on top of the
-    factor (§6.3 / §16). Returns (ticker, out_id, in_id, split_date, factor)."""
+    factor. Returns (ticker, out_id, in_id, split_date, factor)."""
     pairs = []
     by_ticker: dict[str, list[dict]] = {}
     for r in activities:
@@ -346,9 +346,9 @@ def has_negative_qty(res: ReconResult) -> bool:
 def extend_forward(res: ReconResult, activities: list[dict], start: date, end: date) -> None:
     """Carry the ledger FORWARD from the EOD state at `start` through `end`,
     applying whatever activities ARE recorded in that span. Used when the
-    newest snapshot contradicts recorded history (broker posting lag, §4.2):
+    newest snapshot contradicts recorded history (broker posting lag):
     the walk anchors at the last consistent snapshot and this extension keeps
-    the series current; §6.6 ground-truth pinning corrects the totals at every
+    the series current; snapshot ground-truth pinning (series.py) corrects the totals at every
     real snapshot in the span."""
     qty = dict(res.daily_qty.get(start, {}))
     cash = dict(res.daily_cash.get(start, {}))

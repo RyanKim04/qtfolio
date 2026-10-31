@@ -1,4 +1,4 @@
-"""Dashboard data — SPEC.md §8.1, rebuilt on the reconstructed ledger after the
+"""Dashboard data, rebuilt on the reconstructed ledger after the
 move to Wealthsimple (2026-10-27): there is no live positions/balances API any
 more, so holdings and cash are the current book (services/book.py), prices are
 yfinance quotes (60 s cache) and sparklines the cached daily closes.
@@ -140,7 +140,7 @@ class PortfolioService:
 
     async def allocation(self, by: str, currency: str) -> dict:
         if by == "sector":
-            # DECISION: sector allocation needs yfinance sector caching (§8.1) — arrives with M5's analyst sync.
+            # DECISION: sector allocation needs yfinance sector caching — arrives with M5's analyst sync.
             return {"by": by, "available": False, "slices": []}
         h = await self.holdings(currency)
         if h.get("empty"):

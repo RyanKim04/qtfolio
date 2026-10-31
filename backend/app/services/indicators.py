@@ -1,7 +1,7 @@
-"""Indicator engine — SPEC.md §9. Pure Python over candle lists; every array is
+"""Indicator engine. Pure Python over candle lists; every array is
 aligned to the candle timestamps with None during warmup, so the frontend stays
 dumb. TA-Lib conventions: SMA-seeded EMA, Wilder smoothing for RSI/ATR.
-(Support/resistance deliberately absent — owner-deferred, §17.)
+(Support/resistance deliberately absent — owner-deferred.)
 """
 
 import math

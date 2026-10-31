@@ -1,4 +1,4 @@
-"""Job framework — SPEC.md §13.
+"""Job framework.
 
 Every run is logged to job_runs. Catch-up-on-startup is the PRIMARY execution
 path on a laptop; the APScheduler cron firing is the bonus. A job is overdue

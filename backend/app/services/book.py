@@ -1,7 +1,7 @@
 """The current book — what is held right now, at what average cost.
 
 Since the move to Wealthsimple there is no live positions/balances API: the
-reconstructed ledger (§6) IS the book. Quantities and cash are the newest
+reconstructed ledger (reconstruction.py) IS the book. Quantities and cash are the newest
 holdings_ledger / cash_ledger day; average cost comes from an average-cost pass
 over the activity history (all tracked accounts as one book, so a position
 keeps its cost basis across the Questrade → Wealthsimple transfer).

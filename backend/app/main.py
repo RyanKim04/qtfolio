@@ -1,4 +1,4 @@
-"""FastAPI entrypoint. The lifespan runs the SPEC.md §13 startup sequence:
+"""FastAPI entrypoint. The lifespan runs the startup sequence:
 migrations → (1) catch-up pass → (2) schedules. Catch-up is the primary job
 execution path on a laptop; cron firing is the bonus.
 """

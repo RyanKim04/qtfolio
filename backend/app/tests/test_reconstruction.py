@@ -1,4 +1,4 @@
-"""§7 mandatory fixtures: backward-ledger construction over a synthetic
+"""Mandatory fixtures: backward-ledger construction over a synthetic
 activities set — buys/sells, deposit/withdrawal, FX conversion, journal pair
 posting 2 days apart, identical same-day fills, a split under BOTH regimes."""
 

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* SPEC.md §14 design tokens (v2.1, owner-directed): Stripe-style light UI —
+/* Design tokens (owner-directed; CLAUDE.md "Design"): Stripe-style light UI —
    white cards, hairline borders, soft shadows, blurple accent. Green/red remain
    reserved for P&L semantics. */
 @theme {

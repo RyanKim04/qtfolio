@@ -43,4 +43,4 @@ make test   # backend pytest suite
 - `frontend/` — SPA: `src/pages/` (Dashboard, Performance, StockDetail, Settings), `src/components/`.
 - `data/` — gitignored runtime state: SQLite DB and weekly backups.
 
-The repo is public: real financial data (balances, contribution history, account ids) stays in gitignored `*_private.*` files or the DB — tests use synthetic figures. Migrations run automatically at backend startup (`alembic upgrade head`). The original design doc is [`SPEC.md`](SPEC.md).
+The repo is public: real financial data (balances, contribution history, account ids) stays in gitignored `*_private.*` files or the DB — tests use synthetic figures. Migrations run automatically at backend startup (`alembic upgrade head`).

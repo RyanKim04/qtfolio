@@ -90,7 +90,7 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
   );
 }
 
-// The signature band chart (§8.2/§14): value vs capital-in, gap shaded green
+// The signature band chart: value vs capital-in, gap shaded green
 // above / red below, with interpolated crossover points so the fill never gaps.
 function ValueChart({ data, baseline }: { data: PerfValueSeries; baseline: "range" | "inception" }) {
   const rows = useMemo(() => {

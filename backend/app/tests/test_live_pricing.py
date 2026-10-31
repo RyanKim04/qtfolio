@@ -90,7 +90,7 @@ async def test_live_point_overrides_today(monkeypatch):
     m = await performance._series_maps(SimpleNamespace(portfolio=FakePortfolio(10_500.0)))
     assert m["dates"][-1] == TODAY and len(m["dates"]) == 2
     assert m["values"][TODAY] == 1_050_000
-    # §7 start-of-day flow: r = (1.05M − 1M − 50k) / (1M + 50k) = 0
+    # Start-of-day flow: r = (1.05M − 1M − 50k) / (1M + 50k) = 0
     assert m["idx"][TODAY] == pytest.approx(100.0)
     assert m["live_price"] == {"AAA": 12.5}
 

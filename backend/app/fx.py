@@ -1,4 +1,4 @@
-"""Bank of Canada Valet — daily USDCAD (FXUSDCAD), SPEC.md §3.
+"""Bank of Canada Valet — daily USDCAD (FXUSDCAD).
 
 Rates persist as INTEGER micro-units (USDCAD × 1e6). M1 needs only the latest
 rate for the header currency toggle; M2's bootstrap backfills history.

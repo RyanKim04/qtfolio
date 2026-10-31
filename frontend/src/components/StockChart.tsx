@@ -123,7 +123,7 @@ export function StockChart({
     if (toggles.vwap && ind.vwap) addLine(ind.vwap, C.vwap, 2);
     if (toggles.avwap && ind.avwap_52wlow) addLine(ind.avwap_52wlow, C.avwap, 1, LineStyle.Dashed);
 
-    // Owner overlay: avg-cost price line labeled with qty (§8.4).
+    // Owner overlay: avg-cost price line labeled with qty.
     if (position?.owned && position.avg_cost) {
       candles.createPriceLine({
         price: position.avg_cost,

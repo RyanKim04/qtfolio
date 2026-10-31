@@ -1,5 +1,5 @@
-"""Valuation, seam rescaling, TWR — SPEC.md §6.5–§7. Pure math up top (unit-
-tested against the §7 fixtures), DB orchestration below.
+"""Valuation, seam rescaling, TWR. Pure math up top (unit-
+tested against the test_series fixtures), DB orchestration below.
 
 All values integer CAD cents until the final float conversion for the API.
 Forward-fill of closes per listing exchange falls out naturally: candles exist
@@ -131,7 +131,7 @@ def flows_to_cad(flows: dict[date, dict[str, int]], fx_micro: dict[date, int]) -
 
 
 def apply_ground_truth(recon: dict[date, int], gt: dict[date, int]) -> dict[date, int]:
-    """§6.6: snapshots win, without seams. Before the first snapshot: one
+    """Snapshots win, without seams. Before the first snapshot: one
     constant factor. Between snapshots: linear factor interpolation. After the
     last: the last factor. A step discontinuity would print a phantom TWR
     return; rescaling forbids it."""
@@ -162,7 +162,7 @@ def apply_ground_truth(recon: dict[date, int], gt: dict[date, int]) -> dict[date
 
 
 def twr_index(values: dict[date, int], flows_cad: dict[date, int]) -> tuple[dict[date, float], list[dict]]:
-    """§7: r_t = (V_t − V_{t−1} − F_t) / (V_{t−1} + F_t), start-of-day flows.
+    """r_t = (V_t − V_{t−1} − F_t) / (V_{t−1} + F_t), start-of-day flows.
     Denominator ≤ 0 → r_t = 0, logged. Chained, 100 at series start."""
     warnings: list[dict] = []
     dates = sorted(values)
@@ -187,7 +187,7 @@ def apply_live_point(dates: list[date], values: dict[date, int], idx: dict[date,
                      flows: dict[date, int], today: date, total_cents: int) -> bool:
     """Price `today` live in place: override its stored row, or append it with
     zero flow when the series stops short of today. Returns True if appended.
-    The day return follows §7 exactly as twr_index does."""
+    The day return is the same formula twr_index uses."""
     appended = dates[-1] < today
     if appended:
         dates.append(today)
@@ -232,7 +232,7 @@ def range_stats(
     s, e = dates[0], dates[-1]
     twr = idx[e] / idx[s] - 1 if idx.get(s) else None
 
-    # MWR (§7): −V(start) pseudo-flow, deposits negative, withdrawals positive, +V(end).
+    # MWR: −V(start) pseudo-flow, deposits negative, withdrawals positive, +V(end).
     # XIRR is annualized by definition; we convert to the PERIOD return so it sits
     # comparably next to the cumulative TWR (a 1-month window would otherwise
     # display an absurd annualized number). DECISION: mwr = (1+xirr)^(days/365) − 1.

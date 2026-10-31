@@ -1,6 +1,6 @@
 # qtfolio
 
-Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Questrade history). **The original design doc is `SPEC.md` (Build Spec v2; its Questrade-API sections are historical)** — follow it in milestone order (§15) and re-read §16 (edge cases) before starting each milestone. Where the spec decides something, don't relitigate it; genuinely ambiguous points get the simpler option plus a `// DECISION:` comment.
+Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Questrade history). The original build spec (`SPEC.md`) was retired 2026-10-30; this file and the module docstrings are the source of truth (the spec survives in git history at `58e127c`). Owner decisions recorded here aren't relitigated; genuinely ambiguous points get the simpler option plus a `// DECISION:` comment.
 
 ## Status
 
@@ -8,7 +8,7 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Ques
 - **M2 (History + Performance page): built.** Questrade-era activities were bootstrapped from the
   API (and repaired/deduped there); that data is now frozen in the DB.
 - **M3 (stock detail charts): built.** Owner-adjusted scope: NO support/resistance
-  (deferred to §17 — owner plans a sentiment+quant low/high detection model later).
+  (deferred — owner plans a sentiment+quant low/high detection model later).
   lightweight-charts v5 candles+volume, EMA/BB/VWAP/AVWAP overlays, RSI/MACD panes,
   avg-cost line + trade markers, RS mini-chart, Position & Levels panels; indicators
   pandas-verified. Any ticker works read-only via symbol search.
@@ -48,7 +48,7 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Ques
   history; the owner's real history (reproducing CRA's confirmed room) is in the gitignored
   `test_tfsa_private.py`.
 - M5 (analyst/polish): not started (its empty `analyst_*` tables were dropped 2026-10-30).
-- Design: Stripe-style light theme (SPEC.md §14 v2.1) — white cards, Inter, blurple accent.
+- Design: Stripe-style light theme — see Design below.
 
 ## Layout
 
@@ -62,7 +62,7 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Ques
 - `make dev` — backend on 127.0.0.1:8000 + Vite on 127.0.0.1:5173 (proxies `/api`).
 - `make test` — backend pytest.
 
-## Conventions (from SPEC.md — the non-negotiables)
+## Conventions (the non-negotiables)
 
 - Ledger money = INTEGER cents; unit prices / quantities = INTEGER micro-units. Never SQLAlchemy `Numeric` on SQLite. Floats only for chart series and display.
 - Timestamps stored UTC; scheduler + rendering in `America/Toronto`.
@@ -71,8 +71,41 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV + frozen Ques
 - **The GitHub repo is PUBLIC.** Never commit real financial data — balances, contribution/trade
   history, CRA room, account ids, exports. Tests use synthetic numbers; anything real goes in a
   gitignored `*_private.*` file or `private/` dir (e.g. `test_tfsa_private.py`), the DB, or `misc/`.
-- Server binds 127.0.0.1 only. No advisory disclaimers anywhere in the UI.
+- Server binds 127.0.0.1 only, and refuses non-local `Host`/`Origin` headers (`main.py`) — binding alone doesn't stop
+  a website POSTing to it or DNS rebinding. No advisory disclaimers anywhere in the UI.
 - Migrations via Alembic; `alembic upgrade head` runs automatically at backend startup.
+
+## Edge cases (still live)
+
+- Activities have no stable row ids and identical same-day fills are legal: dedup is multiset-aware
+  (occurrence-indexed hashes). Unknown activity types are logged, never guessed.
+- Never assume the activity history covers an account's life; "since inception" is earned only by
+  demonstrated coverage (reconstruction walks backward from ground truth for this reason).
+- USD cash/dividends/deposits are CAD-normalized via dated FX for flows and valuation; native currency is stored too.
+- Norbert's Gambit: DLR/DLR.U journal legs are transfers (not P&L, not contributions), posting up to ~2
+  business days apart — pair-matched with tolerance.
+- Splits: broker-posted split journals must not be double-applied on top of yfinance split factors.
+- Market holidays: forward-fill closes per listing exchange (TSX and NYSE calendars differ).
+- One data source per chart — never mix sources on the same series.
+- yfinance is unofficial: executors, retries, cached last-good data and visible staleness, never crashes.
+- SQLite in WAL mode; sync libraries always run in executors.
+- Jobs: catch-up on startup is the primary execution path on a laptop; cron firing is the bonus.
+
+## Design
+
+Private market dashboard in a Stripe-lineage fintech look: light, hairline-precise, desktop-only (≥ ~1280 px).
+Tokens live in `frontend/src/styles/index.css`: page `#F6F8FB`, card `#FFFFFF`, border `#E3E8EE`, text `#1A1F36`,
+muted `#6A7383`, accent blurple `#635BFF`, up `#17803D`, down `#DF1B41`, capital-in `#8792A2`. Green/red are
+reserved for P&L — charts use blues, purples, grays. Inter everywhere with tabular numerals; dense cards
+(13–14 px data). Signature element: the Performance band between value and capital-in. Motion only on number
+ticks and crosshairs. Copy is plain, sentence case; errors say what happened and what to do next.
+
+## Deferred (don't build unprompted)
+
+- Auto support/resistance → superseded by the owner's planned low/high detection model (~half sentiment with
+  recency decay, ~half price/candle features); SEC EDGAR 8-K/6-K event flags as model features.
+- Volume profile; click-to-anchor AVWAP (52w-low preset ships); ETF sector look-through for allocation.
+- Always-on deployment (mini-PC/VPS + Tailscale), offsite streaming backups (Litestream), responsive layout.
 
 ## Setup (first run)
 

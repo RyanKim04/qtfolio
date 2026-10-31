@@ -1,4 +1,4 @@
-"""yfinance wrapper — SPEC.md §3/§16. yfinance is synchronous and unofficial:
+"""yfinance wrapper. yfinance is synchronous and unofficial:
 every call runs in an executor, retries ×2, degrades to cached data, and never
 crashes the app. Benchmark/comparison closes are auto-adjusted and cached in
 `candles` under interval "1d_yf".
@@ -7,7 +7,7 @@ Since the move to Wealthsimple (2026-10-27) yfinance is also the market-data
 source for everything Questrade used to serve: OHLC bars (split-adjusted, NOT
 dividend-adjusted — the portfolio keeps dividends as cash) cached under the
 app ticker with the legacy interval names (OneDay/OneHour/…), live quotes, and
-symbol resolution. Split-adjusted closes ⇒ the back-adjusted regime (§6.0) by
+symbol resolution. Split-adjusted closes ⇒ the back-adjusted regime (reconstruction.BACK_ADJUSTED) by
 construction.
 """
 

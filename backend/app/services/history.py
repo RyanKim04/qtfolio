@@ -2,7 +2,7 @@
 valuation → series_daily.
 
 recompute() reads only the DB (plus cached yfinance splits), so it reruns
-cheaply after every CSV import (§6.7). Network work (daily bars, FX) lives in
+cheaply after every CSV import. Network work (daily bars, FX) lives in
 the EOD job and the import path.
 """
 
@@ -193,10 +193,10 @@ async def recompute(sessions: async_sessionmaker, yf: YfService) -> dict:
             splits[t] = s
 
     # Anchor selection: the newest snapshot can contradict recorded history when
-    # the broker hasn't posted this week's trades yet (§4.2 posting lag) — the
+    # the broker hasn't posted this week's trades yet (posting lag) — the
     # walk then fabricates negative quantities all the way back, corrupting
     # capital-in and attribution. Anchor at the newest snapshot whose walk is
-    # CLEAN; carry the ledger forward from there and let §6.6 pin the totals to
+    # CLEAN; carry the ledger forward from there and let snapshot pinning pin the totals to
     # every real snapshot in between. Self-heals once the rows post.
     from .reconstruction import extend_forward, has_negative_qty
 
@@ -259,7 +259,7 @@ async def recompute(sessions: async_sessionmaker, yf: YfService) -> dict:
     # whether the backward walk zeroed out. Split/FX reconstruction noise (e.g. a
     # leveraged-ETF split journal) can leave a phantom opening_qty/opening_cash even
     # when we demonstrably have the full history; seeding capital from the day-one
-    # VALUE in that case silently smuggles the day-one market move + §6.6 seam
+    # VALUE in that case silently smuggles the day-one market move + snapshot seam
     # factor into "net deposits". The old heuristic (`not opening_qty and
     # residual < $100`) flipped to False on any such residual, so capital regressed
     # every time the anchor was forced off "today" — unposted trades or a fresh API
@@ -337,7 +337,7 @@ async def trading_days(sessions: async_sessionmaker) -> set[date]:
 
 async def header_stats(sessions: async_sessionmaker, live_total_cad: float | None = None,
                        today: date | None = None) -> dict:
-    """MWR since data start + TWR YTD for the dashboard header (§8.1). With a
+    """MWR since data start + TWR YTD for the dashboard header. With a
     live total, today is priced live — the same last point as the Performance
     charts (api/performance._series_maps)."""
     from .series import apply_live_point, range_stats

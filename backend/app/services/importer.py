@@ -1,4 +1,4 @@
-"""Activities import — SPEC.md §4.3, two-phase: parse+preview first, commit on
+"""Activities import, two-phase: parse+preview first, commit on
 confirmation. Rows land in `activities` through the multiset dedup, so
 re-importing an overlapping export is safe. Parsing is per source
 (services/wealthsimple.py); exports arrive by upload or from the Downloads

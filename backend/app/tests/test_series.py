@@ -1,4 +1,4 @@
-"""§7 math: TWR chain-linking (incl. day one and a mid-period deposit), seam
+"""Performance math: TWR chain-linking (incl. day one and a mid-period deposit), seam
 rescaling against synthetic snapshots, valuation forward-fill, range stats."""
 
 import statistics

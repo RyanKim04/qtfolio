@@ -1,6 +1,6 @@
 // DECISION: plain SVG polyline instead of a per-row Recharts instance — same
 // visual, far lighter with 10+ table rows. Neutral capital-in blue; green/red
-// stay reserved for P&L semantics (§14).
+// stay reserved for P&L semantics.
 export function Sparkline({ data, width = 84, height = 24 }: { data: number[]; width?: number; height?: number }) {
   if (!data || data.length < 2) return <span className="text-[11px] text-muted">—</span>;
   const min = Math.min(...data);

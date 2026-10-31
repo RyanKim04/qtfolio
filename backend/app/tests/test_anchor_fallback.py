@@ -1,4 +1,4 @@
-"""Broker posting lag (§4.2): the newest snapshot can contradict recorded
+"""Broker posting lag: the newest snapshot can contradict recorded
 activities (trades executed but not yet posted). recompute() must fall back to
 the newest CONSISTENT anchor, extend the ledger forward, and keep capital-in on
 pure flows — instead of fabricating negative quantities through all of history."""

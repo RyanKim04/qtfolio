@@ -1,8 +1,8 @@
-"""Stock detail data — SPEC.md §8.4 (minus S/R, owner-deferred §17).
+"""Stock detail data (minus support/resistance, owner-deferred).
 
 Owned tickers get full treatment; any ticker works read-only (resolved on
 Yahoo on first visit). Since the move to Wealthsimple every bar on this page is
-yfinance (split-adjusted OHLC, regular session) — one source per chart (§16).
+yfinance (split-adjusted OHLC, regular session) — one source per chart.
 Intraday history is whatever Yahoo keeps: fetch what's available, don't fight it.
 """
 
@@ -129,7 +129,7 @@ class StockService:
                 bars, lambda b: b["ts"].replace(tzinfo=timezone.utc).astimezone(ET).date()
             )
         else:
-            # Anchored VWAP preset: 52-week low (§8.4; click-to-anchor is §17).
+            # Anchored VWAP preset: 52-week low (click-to-anchor is deferred).
             window = lows[-252:] if len(lows) > 252 else lows
             if window:
                 anchor_idx = len(lows) - len(window) + window.index(min(window))
@@ -239,7 +239,7 @@ class StockService:
 
     async def rs_series(self, ticker: str, benchmark: str) -> dict:
         """Relative strength: close(ticker) / close(benchmark), indexed to 100.
-        Both legs from the same daily source — sources never mixed (§16)."""
+        Both legs from the same daily source — sources never mixed."""
         sym = await self.resolve(ticker)
         bench = await self.resolve(benchmark)
         if not sym or not bench or not sym.currency or not bench.currency:
