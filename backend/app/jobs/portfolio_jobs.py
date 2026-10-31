@@ -19,8 +19,8 @@ log = logging.getLogger(__name__)
 
 
 def _last_market_close_utc(now_utc: datetime) -> datetime:
-    """Most recent weekday 16:00 ET, as naive UTC. Stat holidays are ignored —
-    a redundant snapshot on a holiday is harmless (DECISION)."""
+    """Most recent weekday 16:00 ET, as naive UTC. Stat holidays are ignored,
+    since a redundant snapshot on a holiday is harmless (DECISION)."""
     from datetime import timezone
 
     now_et = now_utc.replace(tzinfo=timezone.utc).astimezone(TZ)
@@ -40,8 +40,9 @@ def make_eod_snapshot(sessions: async_sessionmaker, fx: FxService, yf: YfService
             await fx.latest()
         except Exception as exc:
             log.warning("fx refresh failed: %s", exc)
-        # Daily closes (yfinance) for current holdings + benchmark history —
-        # this is what moves the series forward each day.
+        await fx.ensure_history(await history.first_activity_date(sessions))
+        # Daily closes (yfinance) for current holdings and benchmarks. This is
+        # what moves the series forward each day.
         await history.refresh_market_data(sessions, yf, await history.held_tickers(sessions) or None)
         for b in await history.get_setting(sessions, "benchmarks", history.DEFAULT_BENCHMARKS):
             await yf.refresh_daily_closes(b, date.today() - timedelta(days=10))

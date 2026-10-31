@@ -46,7 +46,7 @@ async def commit_import(sessions: async_sessionmaker, parsed: dict) -> dict:
 
 async def import_ws_export(state, content: bytes, *, commit: bool, source: str | None = None) -> dict:
     """WS rows carry clean symbols (no Questrade-style junk codes), so no
-    description repair — just ledger accounts, Yahoo symbol registry, bars."""
+    description repair. The import creates ledger accounts, registers symbols on Yahoo and fetches bars."""
     parsed = wealthsimple.parse_ws_export(content)
     if not commit:
         return {"phase": "preview", "source": wealthsimple.BROKER, **preview_report(parsed)}
@@ -64,6 +64,7 @@ async def import_ws_export(state, content: bytes, *, commit: bool, source: str |
             tickers = sorted({r["ticker"] for r in parsed["rows"] if r["ticker"]})
             unresolved = await history.ensure_symbols_yf(state.sessions, state.yf, tickers)
             await history.refresh_market_data(state.sessions, state.yf)
+            await state.fx.ensure_history(await history.first_activity_date(state.sessions))
             recompute = await history.recompute(state.sessions, state.yf)
             if unresolved:
                 result["errors"] = result["errors"] + [f"could not resolve on Yahoo: {', '.join(unresolved)}"]

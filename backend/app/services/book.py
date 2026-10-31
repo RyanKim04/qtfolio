@@ -1,4 +1,4 @@
-"""The current book — what is held right now, at what average cost.
+"""The current book: what is held right now, and at what average cost.
 
 Since the move to Wealthsimple there is no live positions/balances API: the
 reconstructed ledger (reconstruction.py) IS the book. Quantities and cash are the newest
@@ -38,15 +38,15 @@ async def current_book(sessions: async_sessionmaker) -> dict | None:
 def average_costs(activities: list[dict], splits: dict[str, dict[date, float]]) -> dict[str, tuple[int, int]]:
     """ticker → (qty_micro, cost_cents) of the open position, native currency,
     in today's split-adjusted units (rows before a split scale by its factor;
-    broker split-journal pairs are skipped — same convention as the
+    broker split-journal pairs are skipped, the same convention as the
     back-adjusted walk).
 
     Average-cost method: buys add their full net cost (commission included),
     sells release cost pro rata, a position that closes resets to zero.
-    Journals/transfers move quantity but never cost — a Questrade → Wealthsimple
+    Journals and transfers move quantity but never cost. A Questrade → Wealthsimple
     transfer nets to zero on its (matched, same-day) date, so the basis carries
     over. DECISION: shares arriving from an untracked institution enter at zero
-    cost (the export's book value is not reliable — CAD figures on USD rows)."""
+    cost, because the export's book value is unreliable (CAD figures on USD rows)."""
     skip = {i for _, out_id, in_id, _, _ in detect_split_journal_pairs(activities, splits) for i in (out_id, in_id)}
 
     def factor_after(ticker: str, d: date) -> float:

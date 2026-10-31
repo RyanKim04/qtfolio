@@ -9,7 +9,6 @@ import { COLORS } from "../lib/palette";
 const MODES = [
   { key: "position", label: "Position" },
   { key: "currency", label: "Currency" },
-  { key: "sector", label: "Sector" },
 ];
 
 export function AllocationDonut() {
@@ -22,26 +21,17 @@ export function AllocationDonut() {
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <h2 className="text-[13px] font-medium">Allocation</h2>
         <div className="flex overflow-hidden rounded-md border border-border">
-          {MODES.map((m) => {
-            const disabled = m.key === "sector";
-            return (
-              <button
-                key={m.key}
-                disabled={disabled}
-                title={disabled ? "Sector data arrives with the analyst sync (M5)" : undefined}
-                onClick={() => setBy(m.key)}
-                className={`px-2 py-0.5 text-[12px] ${
-                  by === m.key
-                    ? "bg-accent font-medium text-white"
-                    : disabled
-                      ? "cursor-not-allowed text-border"
-                      : "text-muted hover:text-text"
-                }`}
-              >
-                {m.label}
-              </button>
-            );
-          })}
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setBy(m.key)}
+              className={`px-2 py-0.5 text-[12px] ${
+                by === m.key ? "bg-accent font-medium text-white" : "text-muted hover:text-text"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className="p-3">

@@ -1,7 +1,7 @@
 """Wealthsimple activities-export CSV → normalized activity rows.
 
 Wealthsimple has no public API; the official export (Activity → Download
-activities → CSV) is the data source — owner decision 2026-10-27: official CSV
+activities → CSV) is the data source. Owner decision 2026-10-27: official CSV
 over the unofficial GraphQL clients (no trading-capable session token stored,
 no ToS exposure). Columns:
 
@@ -16,7 +16,7 @@ already speaks, so both brokers flow through one ledger:
 - MoneyMovement (EFT, …)    → deposits | withdrawals by sign (external flows)
 - MoneyMovement *TRANSFER*  → transfers (broker-to-broker; internal iff matched)
 - SecurityTransfer          → transfers with signed qty and NO cash: the export
-  puts the book value in net_cash_amount (in CAD even for USD stocks) — that is
+  puts the book value in net_cash_amount (in CAD even for USD stocks), which is
   not a cash movement
 - FxExchange → fx conversion · Dividend → dividends · Interest → interest
 - Tax / Fee / AdministrativePayment → fees and rebates (cash, no flow)
@@ -43,7 +43,7 @@ def is_ws_export(content: bytes) -> bool:
 def app_ticker(symbol: str | None, currency: str | None) -> str | None:
     """WS symbol → the app's ticker. DECISION: CAD listings take Questrade's
     `.TO` convention (QT listed the Alphabet CDR as GOOG.TO), so a position keeps
-    one ticker across the transfer — and WS's bare `GOOG` in CAD (the CDR) can
+    one ticker across the transfer, and WS's bare `GOOG` in CAD (the CDR) can
     never collide with the US `GOOG`."""
     s = (symbol or "").strip().upper()
     if not s:
@@ -74,8 +74,8 @@ def _map(rec: dict) -> tuple[str, str, int | None, int]:
     if at == "FxExchange":
         return "fx conversion", "fxt", None, net
     if at == "Dividend":
-        # The export repeats the cash amount in `quantity` (ORCL "1.5" = US$1.50)
-        # — never shares; a reinvestment would arrive as its own Trade row.
+        # The export repeats the cash amount in `quantity` (ORCL "1.5" = US$1.50),
+        # not shares. A reinvestment would arrive as its own Trade row.
         return "dividends", "div", None, net
     if at == "Interest":
         return "interest", "int", None, net
@@ -107,7 +107,7 @@ def parse_ws_export(content: bytes) -> dict:
         price = parse_qty_micro(rec.get("unit_price"))
         rows.append({
             "account_id": acc,
-            # DECISION: dated by effective (trade) date — the export leaves
+            # DECISION: dated by effective (trade) date. The export leaves
             # settlement blank for non-trades, and trade-date holdings value the
             # day correctly. Same-day legs of a transfer match on this date.
             "trade_date": d,

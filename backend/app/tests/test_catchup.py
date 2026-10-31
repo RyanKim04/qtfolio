@@ -1,4 +1,4 @@
-"""Startup catch-up framework — the primary job execution path."""
+"""Startup catch-up framework, the main job execution path."""
 
 import asyncio
 from datetime import timedelta

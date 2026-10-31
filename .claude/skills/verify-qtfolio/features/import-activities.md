@@ -13,7 +13,7 @@ The user brings Wealthsimple history into qtfolio in one of two ways: they pick 
 
 ## How to get to it (user POV)
 
-- Open Settings → **Wealthsimple — import activities** → **Choose File** (or drop a file on the card) → **Import N rows**.
+- Open Settings → **Import Wealthsimple activities** → **Choose File** (or drop a file on the card) → **Import N rows**.
 - Download the export in Wealthsimple so that it lands in `~/Downloads`.
 - (API) `POST /api/import/activities` as multipart `file`, with `commit=true` to commit.
 

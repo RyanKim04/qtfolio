@@ -11,6 +11,8 @@ import logging
 import statistics
 from datetime import date, timedelta
 
+from .reconstruction import classify
+
 log = logging.getLogger(__name__)
 
 MICRO = 1_000_000
@@ -83,7 +85,7 @@ def fx_translation_series(
 ) -> dict[date, int]:
     """Cumulative CAD gain/loss from USD/CAD moves on USD-denominated exposure:
     Σ_t E_usd(t-1) × (rate_t − rate_{t-1}), where E_usd is USD holdings value +
-    USD cash (in USD cents). Pairs with value_series — the currency-translation
+    USD cash (in USD cents). Pairs with value_series as the currency-translation
     component of CAD P&L; investment return is the residual (total − fx). CAD-only
     portfolios return all-zeros. Output cumulative from the first date (=0 there),
     so a window's FX P&L is cum[end] − cum[start]."""
@@ -114,6 +116,34 @@ def fx_translation_series(
         cum += e_prev * (rate - prev_rate) // MICRO
         out[d] = cum
         prev_rate, e_prev = rate, exposure(d)
+    return out
+
+
+def conversion_cost_series(acts: list[dict], fx_micro: dict[date, int], dates: list[date]) -> dict[date, int]:
+    """Cumulative CAD cost of currency conversions versus the market rate. Each
+    conversion leg is valued at that day's USD/CAD and the legs summed, so a
+    CAD→USD swap at the broker's rate nets to minus its spread. With
+    fx_translation_series this is the FX share of CAD P&L. Same convention:
+    0 on the first date, so a window's cost is cum[end] − cum[start]."""
+    legs: dict[date, dict[str, int]] = {}
+    for a in acts:
+        d = a.get("transaction_date")
+        if d is None or classify(a) != "fx":
+            continue
+        per = legs.setdefault(d, {})
+        cur = a.get("currency") or "CAD"
+        per[cur] = per.get(cur, 0) + (a.get("net_amount_cents") or 0)
+    daily = flows_to_cad(legs, fx_micro)
+    out: dict[date, int] = {}
+    if not dates:
+        return out
+    pending = sorted(d for d in daily if d > dates[0])
+    cum = j = 0
+    for d in dates:
+        while j < len(pending) and pending[j] <= d:
+            cum += daily[pending[j]]
+            j += 1
+        out[d] = cum
     return out
 
 

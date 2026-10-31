@@ -1,6 +1,6 @@
 """Extended-hours live pricing: quotes prefer the newest post/pre-market trade
 after the regular close, and the Performance series' today point is the live
-dashboard total — overriding a recomputed today row, or appended when the
+dashboard total. It overrides a recomputed today row, or is appended when the
 series stops short of today (pre-market, weekends)."""
 
 from datetime import date, datetime, timedelta

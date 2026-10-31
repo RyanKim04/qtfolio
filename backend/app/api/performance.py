@@ -24,7 +24,7 @@ async def _load_series(state) -> list[SeriesDaily]:
 
 
 async def _series_maps(state) -> dict | None:
-    """series_daily as per-date maps with TODAY priced live — the dashboard's
+    """series_daily as per-date maps with today priced live at the dashboard's
     figure (current book × quotes, extended hours included), so the charts'
     last point moves with after-hours / pre-market trading instead of waiting
     for the next close. Display-only: the stored rows stay close-based."""
@@ -59,7 +59,7 @@ async def _series_maps(state) -> dict | None:
     # DECISION: no recompute yet today (pre-market, weekend, before the 17:30
     # EOD job) → append today. Every import recomputes, so the book can't have
     # moved since the last row: carry capital and the cumulative FX gain, zero
-    # flows — the gap is pure price, its FX share left unsplit.
+    # flows. The gap is all price; its FX share is left unsplit.
     if apply_live_point(m["dates"], m["values"], m["idx"], m["flows"], today, round(total * 100)):
         m["capital"][today] = m["capital"][last]
         m["fx_cum"][today] = m["fx_cum"][last]
@@ -79,7 +79,7 @@ async def performance_series(
     state = request.app.state
     m = await _series_maps(state)
     if m is None:
-        return {"empty": True, "reason": "no reconstructed history yet — run bootstrap in Settings"}
+        return {"empty": True, "reason": "no history yet; import a Wealthsimple activities export in Settings"}
 
     all_dates, values, idx, flows = m["dates"], m["values"], m["idx"], m["flows"]
     start = range_start(all_dates, range)
@@ -111,7 +111,7 @@ async def performance_series(
         # Window baseline: the portfolio value at range start counts as capital, so
         # the band = P&L earned within the window. EXCEPTION: when the window reaches
         # back to inception (range covers the first series date) there is no starting
-        # stake — the account began empty and the deposits ARE the capital. Using the
+        # stake: the account began empty and the deposits are the capital. Using the
         # day-one reconstructed value there understates capital by the day-one opening
         # residual (split/FX noise), pushing capital-in below true net deposits; fall
         # back to the flows-based capital so all-time Window P&L is identical to
@@ -127,12 +127,8 @@ async def performance_series(
         e for e in (await history.get_setting(state.sessions, "flow_events", []) or [])
         if dates[0].isoformat() <= e["date"] <= dates[-1].isoformat()
     ]
-    # Split the window's P&L into currency-neutral investment gain vs FX translation.
-    fx_cum = m["fx_cum"]
-    fx_pnl = (fx_cum.get(dates[-1], 0) - fx_cum.get(dates[0], 0)) / 100
     return {**base, "baseline": baseline, "dates": [d.isoformat() for d in dates], "value": val_series,
             "capital_in": cap_series, "pnl": pnl_series,
-            "fx_pnl": fx_pnl, "investment_pnl": pnl_series[-1] - fx_pnl,
             "flows": [{"date": e["date"], "amount": e["amount_cents"] / 100,
                        "currency": e["currency"], "kind": e["kind"]} for e in events],
             "opening_value": values[dates[0]] / 100}
@@ -204,9 +200,10 @@ async def _stacked(state, dates, ledger_end: date, live_price: dict[str, float])
 
 @router.get("/performance/attribution")
 async def performance_attribution(request: Request, range: str = Query("1y")):
-    """Per-position P&L over the selected window: (MV_end − MV_start) + trade
-    cash flows + dividends, in CAD. Interest/fees and FX residue get their own
-    buckets so the table reconciles exactly to the chart's window P&L."""
+    """Per-position price P&L over the selected window: (MV_end − MV_start) +
+    trade cash flows, in CAD. Dividends, interest, USD cash FX, currency
+    conversion cost and fees get their own lines and the rest lands in "other",
+    so the table reconciles exactly to the chart's window P&L."""
     if range not in RANGES:
         raise HTTPException(400, f"range must be one of {RANGES}")
     state = request.app.state
@@ -222,7 +219,7 @@ async def performance_attribution(request: Request, range: str = Query("1y")):
 
 
 async def _attribute(state, m: dict, s: date, e: date) -> dict:
-    """Window attribution (s, e] over the live-priced series maps — shared by the
+    """Window attribution (s, e] over the live-priced series maps, shared by the
     range table and the single-day breakdown."""
     all_dates = m["dates"]
     dates = [d for d in all_dates if s <= d <= e]
@@ -231,19 +228,19 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
     # The window always ends at the series' last point, which _series_maps prices
     # live when it is today (same source as the dashboard, extended hours
     # included) so after-hours moves land in each ticker's row instead of pooling
-    # in "other". PRICES are live but QUANTITIES stay ledger-based — mixing live
+    # in "other". Prices are live but quantities stay ledger-based; mixing live
     # position sizes in would corrupt the rows whenever today's trades haven't
     # been imported yet. Falls back to official closes when live pricing fails.
     live_price = {t: round(p * 100) for t, p in m["live_price"].items()} if e == all_dates[-1] else {}
     live_reason = m["live_reason"]
 
     # Window total. The capital base is the value at range start, EXCEPT when the
-    # window reaches inception (account began empty) — then NET DEPOSITS are the base,
+    # window reaches inception (account began empty). Then net deposits are the base,
     # so the all-time total matches the Lifetime chart and true net deposits exactly
     # rather than the day-one reconstructed value (learned 2026-09-21). A live end
-    # value is the actual live portfolio total — the figure the dashboard shows — so
+    # value is the live portfolio total the dashboard shows, so
     # the Total reconciles to the headline; per-position rows stay ledger-based, and
-    # the gap between the ledger row sum and the authoritative total lands in "other".
+    # the gap between the ledger row sum and that total lands in "other".
     stored_capital = m["capital"]
     window_flows = sum(flows.get(d, 0) for d in dates[1:])
     baseline_capital = stored_capital[s] if s == all_dates[0] else values[s]
@@ -258,6 +255,9 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
             select(Activity).where(Activity.transaction_date > s, Activity.transaction_date <= e))).scalars())
         sym_rows = {sym.ticker: sym for sym in (await session.execute(select(Symbol))).scalars()}
         fx_rows = (await session.execute(select(FxRate))).scalars().all()
+        usd_cash = {r.date: r.balance_cents for r in (await session.execute(
+            select(CashLedgerRow).where(CashLedgerRow.currency == "USD", CashLedgerRow.date >= s,
+                                        CashLedgerRow.date <= min(e, m["ledger_end"])))).scalars()}
     fx = _FFill({r.date: r.usdcad_micro for r in fx_rows})
 
     def to_cad(cents: int, currency: str | None, on) -> int:
@@ -266,21 +266,34 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
         return cents
 
     trades: dict[str, int] = {}
+    bought: dict[str, int] = {}  # cash spent on buys, positive
+    sold: dict[str, int] = {}  # cash received from sells, positive
     dividends: dict[str, int] = {}
-    interest_fees = 0
+    untagged_dividends = interest = fees = rebates = conversion = 0
     trade_list = []
     for a in acts:
-        kind = classify({"type": a.type, "action": a.action, "ticker": a.ticker, "qty_micro": a.qty_micro})
-        net = to_cad(a.net_amount_cents or 0, a.currency, a.transaction_date)
+        kind = classify({"type": a.type, "action": a.action, "ticker": a.ticker, "qty_micro": a.qty_micro,
+                         "net_amount_cents": a.net_amount_cents})  # cash-only "Other" rows (QT HST) are fees
+        net =to_cad(a.net_amount_cents or 0, a.currency, a.transaction_date)
         if kind == "trade" and a.ticker:
             trades[a.ticker] = trades.get(a.ticker, 0) + net
+            side = bought if net < 0 else sold
+            side[a.ticker] = side.get(a.ticker, 0) + abs(net)
             trade_list.append({"date": a.transaction_date.isoformat(), "ticker": a.ticker, "action": a.action,
                                "qty": abs(a.qty_micro or 0) / 1_000_000,
                                "price": (a.price_micro or 0) / 1_000_000, "currency": a.currency})
         elif kind == "dividend" and a.ticker:
             dividends[a.ticker] = dividends.get(a.ticker, 0) + net
-        elif kind in ("interest", "fee"):
-            interest_fees += net
+        elif kind == "dividend":
+            untagged_dividends += net
+        elif kind == "interest":
+            interest += net
+        elif kind == "fee" and net > 0:
+            rebates += net
+        elif kind == "fee":
+            fees += net  # broker fees, sales tax, foreign withholding tax
+        elif kind == "fx":
+            conversion += net  # legs at the market rate net to minus the spread
 
     tickers = sorted(set(h_start) | set(h_end) | set(trades) | set(dividends))
     closes = {t: _FFill(await candle_svc.daily_closes_cents(state.sessions, t)) for t in tickers}
@@ -301,7 +314,7 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
     attributed = 0
     for t in tickers:
         mv_s, mv_e = mv(t, h_start.get(t, 0), s), mv(t, h_end.get(t, 0), e)
-        pnl = mv_e - mv_s + trades.get(t, 0) + dividends.get(t, 0)
+        pnl = mv_e - mv_s + trades.get(t, 0)  # price only; dividends are their own line
         attributed += pnl
         p_s, p_e = price(t, s), price(t, e)
         out.append({
@@ -314,14 +327,28 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
             "mv_start": mv_s / 100,
             "mv_end": mv_e / 100,
             "invested_net": -trades.get(t, 0) / 100,  # positive = net money put in
+            "bought": bought.get(t, 0) / 100,
+            "sold": sold.get(t, 0) / 100,
             "dividends": dividends.get(t, 0) / 100,
             "pnl": pnl / 100,
         })
     out.sort(key=lambda r: -r["pnl"])
-    other = total_pnl - attributed - interest_fees
-    # Orthogonal split of the SAME total: how much of the CAD P&L came from USD/CAD
-    # moving (fx_pnl) vs the securities themselves (investment_pnl). Independent of
-    # the per-position rows, which already carry each position's FX inside its CAD P&L.
+    # USD cash has no row of its own, so what USD/CAD moves did to it gets a line.
+    # Same rule as series.fx_translation_series: prior day's balance × rate change.
+    # A live today past the ledger carries the last ledger balance.
+    def rate(on) -> int:
+        return fx.at(on, flat_backfill=True) or 1_000_000
+
+    def usd_bal(on) -> int:
+        return usd_cash.get(min(on, m["ledger_end"]), 0)
+
+    usd_cash_fx = sum(usd_bal(p) * (rate(d) - rate(p)) for p, d in zip(dates, dates[1:])) // 1_000_000
+    dividends_total = sum(dividends.values()) + untagged_dividends
+    other = total_pnl - attributed - dividends_total - interest - usd_cash_fx - conversion - fees - rebates
+    # A second split of the same total: how much of the CAD P&L came from USD/CAD
+    # (rate moves on USD exposure plus conversion spread, fx_pnl) vs the securities
+    # themselves (investment_pnl). Independent of the per-position rows, which
+    # already carry each position's FX inside its CAD P&L.
     fx_pnl = fx_cum.get(e, 0) - fx_cum.get(s, 0)
     return {
         "start": s.isoformat(), "end": e.isoformat(),
@@ -329,10 +356,18 @@ async def _attribute(state, m: dict, s: date, e: date) -> dict:
         "live_reason": live_reason,
         "rows": out,
         "trades": trade_list,
-        "interest_fees": interest_fees / 100,
-        "other": other / 100,  # unresolved rows, seam scaling (FX spread now split out below)
+        "price_gains": attributed / 100,
+        "dividends": dividends_total / 100,
+        "interest": interest / 100,
+        "usd_cash_fx": usd_cash_fx / 100,
+        "conversion_cost": conversion / 100,
+        "fees": fees / 100,
+        "rebates": rebates / 100,
+        "other": other / 100,  # opening residual, snapshot seams, rounding
+        "adjustments": (fees + rebates + other) / 100,
         "total_pnl": total_pnl / 100,
         "fx_pnl": fx_pnl / 100,
+        "fx_rate_pnl": (fx_pnl - conversion) / 100,
         "investment_pnl": (total_pnl - fx_pnl) / 100,
         "opening_value": values[s] / 100,
         "closing_value": values[e] / 100,

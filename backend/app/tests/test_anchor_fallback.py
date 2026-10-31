@@ -1,7 +1,7 @@
 """Broker posting lag: the newest snapshot can contradict recorded
 activities (trades executed but not yet posted). recompute() must fall back to
-the newest CONSISTENT anchor, extend the ledger forward, and keep capital-in on
-pure flows — instead of fabricating negative quantities through all of history."""
+the newest consistent anchor, extend the ledger forward, and keep capital-in on
+pure flows, instead of producing negative quantities through all of history."""
 
 from datetime import date, datetime, timedelta
 
@@ -38,7 +38,7 @@ async def seed(sessions):
     async with sessions() as s:
         s.add(Account(qt_account_id="A", tracked=True))
         # snapshots: a clean one 5 days ago (10 XYZ), and today's showing 6 XYZ
-        # (4 shares sold this week — the sell has NOT posted to activities)
+        # (4 shares sold this week; the sell has not posted to activities)
         for d, qty, cash in ((clean_day, 10, 9_000_00), (TODAY, 6, 9_400_00)):
             s.add(PositionSnapshot(date=d, account_id="A", ticker="XYZ", qty_micro=qty * M,
                                    price_micro=100 * M, market_value_cents=qty * 100_00, currency="CAD"))
@@ -68,7 +68,7 @@ async def test_recompute_falls_back_to_consistent_anchor(sessions):
     async with sessions() as s:
         rows = list((await s.execute(select(SeriesDaily).order_by(SeriesDaily.date))).scalars())
     assert rows[-1].date == TODAY
-    # capital-in stays pure flows ($10k deposited) — not polluted by the phantom gap
+    # capital-in stays pure flows ($10k deposited), unaffected by the phantom gap
     assert rows[-1].capital_in_cad_cents == 10_000_00
     # totals pinned to today's real snapshot despite approximated tail holdings
     assert rows[-1].portfolio_value_cad_cents == 9_400_00 + 6 * 100_00
@@ -90,8 +90,8 @@ async def test_recompute_uses_newest_anchor_when_consistent(sessions):
 
 async def seed_with_opening_residual(sessions):
     """Account funded from empty, but the only snapshot carries 2 phantom XYZ
-    shares and $700 of cash beyond what the activities explain — so the backward
-    walk leaves a non-empty opening_qty AND a >$100 opening cash residual (the
+    shares and $700 of cash beyond what the activities explain, so the backward
+    walk leaves a non-empty opening_qty and a >$100 opening cash residual (the
     minimal stand-in for the leveraged-ETF split / FX reconstruction noise seen in
     production). Inception is still covered: the deposit is the first-ever event."""
     d_dep, d_buy = TODAY - timedelta(days=20), TODAY - timedelta(days=19)
@@ -130,7 +130,7 @@ async def test_capital_in_ignores_opening_residual(sessions):
 
     async with sessions() as s:
         rows = list((await s.execute(select(SeriesDaily).order_by(SeriesDaily.date))).scalars())
-    # net deposits = $10,000 exactly — the phantom 2 XYZ + $700 cash are folded into
+    # net deposits = $10,000 exactly. The phantom 2 XYZ + $700 cash are folded into
     # P&L, never into capital. (The buggy seed would have produced ~$10,900.)
     assert rows[-1].capital_in_cad_cents == 10_000_00
     # and the day-one seed is the flow, not the reconstructed opening value

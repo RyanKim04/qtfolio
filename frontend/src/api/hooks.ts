@@ -29,14 +29,14 @@ import type {
 // Backend prices come from Yahoo's streamer (seconds behind the tape), so the
 // dashboard polls briskly; each poll is a local, cached computation.
 const LIVE_MS = 5_000;
-// Performance charts end on a live point too — heavier endpoints, half the rate.
+// Performance charts end on a live point too. Their endpoints are heavier, so they poll at half the rate.
 const PERF_LIVE_MS = 30_000;
 
 export function useHealth() {
   return useQuery({
     queryKey: ["health"],
     queryFn: () => api<Health>("/health"),
-    // Poll fast while a job is reporting progress (e.g. bootstrap), else 30s.
+    // Poll fast while a job is reporting progress, else every 30 s.
     refetchInterval: (query) =>
       Object.keys(query.state.data?.progress ?? {}).length > 0 ? 2_500 : 30_000,
   });
@@ -200,7 +200,7 @@ async function upload<T>(path: string, file: File, commit: boolean): Promise<T> 
   const form = new FormData();
   form.append("file", file);
   form.append("commit", String(commit));
-  // headers: {} drops api()'s JSON Content-Type — the browser sets multipart + boundary.
+  // headers: {} drops api()'s JSON Content-Type so the browser sets multipart and its boundary.
   return api<T>(path, { method: "POST", body: form, headers: {} });
 }
 

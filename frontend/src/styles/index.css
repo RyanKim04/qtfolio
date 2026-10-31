@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
-/* Design tokens (owner-directed; CLAUDE.md "Design"): Stripe-style light UI —
-   white cards, hairline borders, soft shadows, blurple accent. Green/red remain
-   reserved for P&L semantics. */
+/* Design tokens (owner-directed, see CLAUDE.md "Design"). Stripe-style light UI
+   with white cards, hairline borders, soft shadows and a blurple accent. Green
+   and red are reserved for P&L. */
 @theme {
   --color-bg: #f6f8fb; /* page background */
   --color-panel: #ffffff; /* cards */
@@ -39,7 +39,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Stripe-style card: white, hairline border, gentle radius + shadow. */
+/* Card: white, hairline border, 8px radius, faint shadow. */
 .card {
   background: var(--color-panel);
   border: 1px solid var(--color-border);

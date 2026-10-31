@@ -1,5 +1,5 @@
 """Indicators verified against a reference implementation (pandas, which
-ships with yfinance) on a fixture series — M3 acceptance requirement.
+ships with yfinance) on a fixture series, as M3 acceptance required.
 
 Seeding conventions differ (we SMA-seed EMAs per TA-Lib; pandas ewm seeds on
 the first value), so EMA-family comparisons check the tail after warmup, where

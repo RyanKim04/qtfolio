@@ -19,7 +19,7 @@ export function DayBreakdownPopover({ day }: { day: StatDay }) {
       {q.isLoading ? (
         <div className="py-6 text-center text-muted">Loading {day.date}…</div>
       ) : q.isError || !q.data ? (
-        <div className="py-6 text-center text-muted">Breakdown unavailable</div>
+        <div className="py-6 text-center text-muted">Couldn't load this day's breakdown.</div>
       ) : (
         <DayBody d={q.data} />
       )}
@@ -28,7 +28,7 @@ export function DayBreakdownPopover({ day }: { day: StatDay }) {
 }
 
 function DayBody({ d }: { d: Day }) {
-  const residual = d.other + d.interest_fees;
+  const residual = d.total_pnl - d.rows.reduce((sum, r) => sum + r.pnl, 0);
   const fx = d.usdcad ? pct(d.usdcad.start, d.usdcad.end) : null;
   return (
     <>
@@ -44,7 +44,7 @@ function DayBody({ d }: { d: Day }) {
       </div>
       <div className="num mt-1 text-[11px] text-muted">
         {fmtMoney(d.opening_value, "CAD")} → {fmtMoney(d.closing_value, "CAD")}
-        {d.flows !== 0 && <> · {d.flows > 0 ? "deposit" : "withdrawal"} {fmtMoney(Math.abs(d.flows), "CAD")} (not return)</>}
+        {d.flows !== 0 && <> · {d.flows > 0 ? "deposit" : "withdrawal"} {fmtMoney(Math.abs(d.flows), "CAD")} (not counted as return)</>}
       </div>
 
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border pt-2">

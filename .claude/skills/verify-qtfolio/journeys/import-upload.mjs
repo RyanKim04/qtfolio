@@ -1,4 +1,4 @@
-// Feature: import-activities (upload path) — fresh instance → onboarding redirect → upload the
+// Feature: import-activities (upload path): fresh instance → onboarding redirect → upload the
 // synthetic export → preview → commit → Dashboard shows the reconstructed holdings.
 // Run: qtv browse import-upload .claude/skills/verify-qtfolio/journeys/import-upload.mjs
 import { fileURLToPath } from "node:url";
@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const FIXTURE = fileURLToPath(new URL("../fixtures/ws-activities-synthetic.csv", import.meta.url));
 
 export default async ({ page, base, step, note }) => {
-  const card = () => page.locator("section", { has: page.getByRole("heading", { name: "Wealthsimple — import activities" }) });
+  const card = () => page.locator("section", { has: page.getByRole("heading", { name: "Import Wealthsimple activities" }) });
 
   await step("onboarding-redirect", async () => {
     await page.goto(base + "/");

@@ -2,7 +2,7 @@
 
 Owned tickers get full treatment; any ticker works read-only (resolved on
 Yahoo on first visit). Since the move to Wealthsimple every bar on this page is
-yfinance (split-adjusted OHLC, regular session) — one source per chart.
+yfinance (split-adjusted OHLC, regular session), one source per chart.
 Intraday history is whatever Yahoo keeps: fetch what's available, don't fight it.
 """
 
@@ -82,8 +82,8 @@ class StockService:
                     .order_by(Candle.ts)
                 )
             ).scalars().all()
-        # Defense in depth: one bar per timestamp key (daily = date), last wins —
-        # the chart library hard-asserts strictly ordered unique times.
+        # Keep one bar per timestamp key (daily = date), last wins. The chart
+        # library throws unless times are unique and strictly ordered.
         dedup: dict = {}
         for r in rows:
             key = r.ts.date() if qt_interval == "OneDay" else r.ts
@@ -239,7 +239,7 @@ class StockService:
 
     async def rs_series(self, ticker: str, benchmark: str) -> dict:
         """Relative strength: close(ticker) / close(benchmark), indexed to 100.
-        Both legs from the same daily source — sources never mixed."""
+        Both legs come from the same daily source."""
         sym = await self.resolve(ticker)
         bench = await self.resolve(benchmark)
         if not sym or not bench or not sym.currency or not bench.currency:

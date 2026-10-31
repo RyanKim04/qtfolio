@@ -73,7 +73,7 @@ export interface PerfStats {
 
 export interface StatDay {
   date: string;
-  prev: string; // previous market session — the day's return is measured from its close
+  prev: string; // previous market session; the day's return is measured from its close
   r: number;
 }
 
@@ -88,8 +88,6 @@ export interface PerfValueSeries {
   value: number[];
   capital_in: number[];
   pnl: number[];
-  fx_pnl: number;
-  investment_pnl: number;
   flows: { date: string; amount: number; currency: string; kind: string }[];
   opening_value: number;
 }
@@ -112,11 +110,14 @@ export interface PerfStackedSeries {
 
 export interface AttributionRow {
   ticker: string;
+  qty_end: number;
   mv_start: number;
   mv_end: number;
   invested_net: number;
+  bought: number; // cash spent on buys in the window
+  sold: number; // cash received from sells in the window
   dividends: number;
-  pnl: number;
+  pnl: number; // price P&L: mv_end − mv_start + sold − bought
 }
 
 export interface Attribution {
@@ -126,22 +127,32 @@ export interface Attribution {
   end: string;
   live: boolean;
   rows: AttributionRow[];
-  interest_fees: number;
-  other: number;
+  /** Window P&L by line: price_gains (Σ row pnl) + dividends + interest + usd_cash_fx
+   *  + conversion_cost + adjustments = total_pnl. */
+  price_gains: number;
+  dividends: number;
+  interest: number;
+  usd_cash_fx: number; // USD/CAD moves on USD cash held
+  conversion_cost: number; // CAD↔USD conversions vs the market rate (≤ 0)
+  adjustments: number; // fees + rebates + other
+  fees: number; // broker fees, sales tax, withholding tax (≤ 0)
+  rebates: number;
+  other: number; // opening balance gap, snapshot seams, rounding
   total_pnl: number;
+  /** The same total by currency: fx_pnl = fx_rate_pnl + conversion_cost. */
   fx_pnl: number;
+  fx_rate_pnl: number;
   investment_pnl: number;
 }
 
 export interface DayBreakdownRow extends AttributionRow {
   currency: string;
   qty_start: number;
-  qty_end: number;
   price_start: number | null; // native
   price_end: number | null;
 }
 
-/** One session's breakdown (GET /performance/day) — the Best/Worst day cards. */
+/** One session's breakdown (GET /performance/day), shown by the Best/Worst day cards. */
 export interface DayBreakdown {
   date: string;
   prev: string;
@@ -149,7 +160,6 @@ export interface DayBreakdown {
   live: boolean;
   rows: DayBreakdownRow[];
   trades: { date: string; ticker: string; action: string; qty: number; price: number; currency: string }[];
-  interest_fees: number;
   other: number;
   total_pnl: number;
   fx_pnl: number;

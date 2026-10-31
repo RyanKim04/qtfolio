@@ -13,7 +13,7 @@ This directory is the maintained source for verifying qtfolio's user-facing beha
 
 - Use one `step()` per user action. Scope locators to a section by its `<h2>` heading. Name buttons and links by visible text, and inputs by placeholder.
 - Wait on expected text or roles, never on fixed sleeps. Imports and recomputes can take up to ~90 s.
-- Assert deterministic facts (tickers, qty, avg cost, cash, counts, dates), never live prices or P&L.
+- Assert deterministic facts (tickers, qty, avg cost, cash, counts, dates), never live prices or absolute P&L. Do assert P&L identities (lines sum to totals) to the cent; see Performance.
 - Confirm side effects with `qtv sql` / `qtv api`, read-only.
 
 ## Proof and skip reporting
@@ -31,6 +31,6 @@ Each feature file starts with an H1 and a one-paragraph description, then has ex
 
 - [Import activities](./import-activities.md) covers upload preview and commit, the Downloads auto-import, dedup on re-import, and onboarding redirect. Proven by `journeys/import-upload.mjs` and `journeys/import-reject.mjs` (reject + dedup); watcher retry and cross-origin refusal have recipes in the file.
 - [Dashboard](./dashboard.md) covers the stat tiles, holdings table, cash line, allocation donut, CAD/USD toggle, and row → stock page.
-- [Performance](./performance.md) covers the value, compare, and structure charts, the range selector, stats, and P&L by position.
+- [Performance](./performance.md) covers the value, compare, and structure charts, the range selector, stats, and P&L by position. P&L numbers are proven by `journeys/pnl-lines.mjs` (table identities to the cent, defaults, XEQT.TO in Compare) plus the hand-checked cash lines and FX coverage check in the file.
 - [Stock detail](./stock-detail.md) covers candles, intervals, overlays and indicator panes, the Position and Levels panels, and symbol search.
 - [TFSA room](./tfsa-room.md) covers the Settings anchor and limits, the Dashboard room card, and recording with warnings.

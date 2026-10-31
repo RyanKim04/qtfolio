@@ -39,7 +39,7 @@ export function Header() {
         </div>
         <span
           className={`h-2 w-2 rounded-full ${jobsOk ? "bg-up" : "bg-down"}`}
-          title={jobsOk ? "jobs ok" : "a job failed — see Settings"}
+          title={jobsOk ? "All jobs OK" : "A job failed. See Settings."}
         />
       </div>
     </header>

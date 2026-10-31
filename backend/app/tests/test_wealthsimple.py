@@ -62,7 +62,7 @@ def test_ws_export_detected_and_mapped():
     assert classify(by_desc(rows, "CAD credited")) == "fee"
     assert classify(by_desc(rows, "Non-resident tax")) == "fee"
     div = by_desc(rows, "Cash dividend")
-    # WS repeats the cash amount in `quantity` — must not become 1.0 phantom share
+    # WS repeats the cash amount in `quantity`; it must not become a 1.0 phantom share
     assert classify(div) == "dividend" and div["qty_micro"] is None and div["net_amount_cents"] == 100
 
 
