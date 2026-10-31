@@ -1,12 +1,5 @@
 export type Currency = "CAD" | "USD";
 
-export interface TokenStatus {
-  status: "absent" | "ok" | "broken";
-  api_server: string | null;
-  access_expires_at: string | null;
-  updated_at: string | null;
-}
-
 export interface JobLastRun {
   started_at: string;
   finished_at: string | null;
@@ -26,16 +19,25 @@ export interface ReconWarning {
   message: string;
 }
 
+export interface WsImportInfo {
+  at: string;
+  through: string | null;
+  imported: number;
+  file?: string | null;
+}
+
 export interface Health {
-  token: TokenStatus;
+  wealthsimple: {
+    accounts: number;
+    last_import: WsImportInfo | null;
+    watch: { dir: string; error: string | null };
+  };
   jobs: JobInfo[];
-  sources: { anthropic: boolean };
   progress: Record<string, string>;
   fx: { date: string; usdcad: number } | null;
-  candle_adjustment_regime: string | null;
   series: { start: string; end: string; days: number } | null;
   warnings: ReconWarning[];
-  onboarding: { has_token: boolean; token_ok: boolean; has_accounts: boolean; has_history: boolean };
+  onboarding: { has_accounts: boolean; has_history: boolean };
 }
 
 export interface Summary {
@@ -45,11 +47,16 @@ export interface Summary {
   total_value?: number;
   day_pnl?: number;
   day_pnl_pct?: number | null;
+  extended_hours?: boolean;
+  prices_as_of?: string | null; // trade time behind the newest price
+  price_session?: "post" | "pre" | null;
+  quotes_live?: boolean; // inside the US pre-market → after-hours window
   open_pnl?: number;
   cash?: number;
   mwr?: number | null;
   mwr_since?: string | null;
   twr_ytd?: number | null;
+  freshness?: { ledger_accounts: number; activity_through: string | null; last_import_at: string | null };
 }
 
 export type RangeKey = "1m" | "3m" | "6m" | "1y" | "all";
@@ -60,8 +67,14 @@ export interface PerfStats {
   mwr_since?: string;
   max_drawdown: number | null;
   vol: number | null;
-  best_day: { date: string; r: number } | null;
-  worst_day: { date: string; r: number } | null;
+  best_day: StatDay | null;
+  worst_day: StatDay | null;
+}
+
+export interface StatDay {
+  date: string;
+  prev: string; // previous market session — the day's return is measured from its close
+  r: number;
 }
 
 export interface PerfValueSeries {
@@ -75,6 +88,8 @@ export interface PerfValueSeries {
   value: number[];
   capital_in: number[];
   pnl: number[];
+  fx_pnl: number;
+  investment_pnl: number;
   flows: { date: string; amount: number; currency: string; kind: string }[];
   opening_value: number;
 }
@@ -114,6 +129,35 @@ export interface Attribution {
   interest_fees: number;
   other: number;
   total_pnl: number;
+  fx_pnl: number;
+  investment_pnl: number;
+}
+
+export interface DayBreakdownRow extends AttributionRow {
+  currency: string;
+  qty_start: number;
+  qty_end: number;
+  price_start: number | null; // native
+  price_end: number | null;
+}
+
+/** One session's breakdown (GET /performance/day) — the Best/Worst day cards. */
+export interface DayBreakdown {
+  date: string;
+  prev: string;
+  r: number;
+  live: boolean;
+  rows: DayBreakdownRow[];
+  trades: { date: string; ticker: string; action: string; qty: number; price: number; currency: string }[];
+  interest_fees: number;
+  other: number;
+  total_pnl: number;
+  fx_pnl: number;
+  opening_value: number;
+  closing_value: number;
+  flows: number;
+  market: { symbol: string; r: number }[];
+  usdcad: { start: number; end: number } | null;
 }
 
 export interface StockCandlesPayload {
@@ -181,6 +225,7 @@ export interface CompareResult {
 
 export interface ImportPreview {
   phase: "preview";
+  source: "wealthsimple";
   n_rows: number;
   by_type: Record<string, number>;
   date_range: [string, string] | null;
@@ -196,7 +241,7 @@ export interface ImportResult {
   imported: number;
   duplicates: number;
   errors: string[];
-  recompute: { ok: boolean; days?: number; warnings?: number; reason?: string };
+  recompute: { ok: boolean; days?: number; warnings?: number; reason?: string; skipped?: string };
 }
 
 export interface HoldingRow {
@@ -205,6 +250,8 @@ export interface HoldingRow {
   qty: number;
   avg_cost: number | null;
   last: number | null;
+  session: "post" | "pre" | null;
+  price_time: string | null;
   market_value: number;
   weight: number | null;
   day_pnl: number | null;
@@ -219,6 +266,7 @@ export interface Holdings {
   as_of: string;
   total_equity?: number;
   cash_native?: { CAD: number; USD: number };
+  cash_weight?: number | null;
   rows: HoldingRow[];
 }
 
@@ -234,6 +282,7 @@ export interface Account {
   type: string | null;
   status: string | null;
   tracked: boolean;
+  broker: "questrade" | "wealthsimple";
 }
 
 export interface SettingsData {
@@ -241,9 +290,57 @@ export interface SettingsData {
   accounts: Account[];
 }
 
-export interface TestResult {
-  ok: boolean;
-  latency_ms?: number;
-  accounts?: Account[];
-  error?: string;
+export type TfsaTxnType = "contribution" | "withdrawal" | "transfer";
+
+export interface TfsaTxn {
+  id: number;
+  date: string;
+  institution: string;
+  type: TfsaTxnType;
+  amount: number;
+  note: string | null;
+}
+
+export interface TfsaConfig {
+  limits: Record<string, number | null>; // null = not announced yet
+  anchor: { year: number; room: number } | null; // CRA-confirmed Jan 1 room
+}
+
+export interface TfsaSummary extends TfsaConfig {
+  today: string;
+  configured: boolean;
+  transactions: TfsaTxn[];
+  year?: number;
+  jan1?: number;
+  contributed?: number;
+  withdrawn?: number;
+  remaining?: number;
+  next_year?: number;
+  next_limit?: number;
+  next_limit_provisional?: boolean;
+  projected_next_jan1?: number;
+  overcontribution?: { excess: number; monthly_tax: number; since: string | null } | null;
+  reconcile?: { year: number; computed_jan1: number } | null;
+}
+
+export interface TfsaWarning {
+  level: "danger" | "warning" | "info";
+  code: string;
+  message: string;
+}
+
+export interface TfsaTxnInput {
+  date: string;
+  institution: string;
+  type: TfsaTxnType;
+  amount: string;
+  note?: string;
+}
+
+export interface TfsaRecordResult {
+  phase: "preview" | "committed";
+  id?: number;
+  year: number;
+  room_after: number | null;
+  warnings: TfsaWarning[];
 }

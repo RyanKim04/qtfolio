@@ -3,7 +3,6 @@ import { Component, createContext, useContext, useState, type ReactNode } from "
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useHealth } from "./api/hooks";
 import type { Currency } from "./api/types";
-import { BrokenTokenBanner } from "./components/BrokenTokenBanner";
 import { Header } from "./components/Header";
 import { LeftRail } from "./components/LeftRail";
 import { Dashboard } from "./pages/Dashboard";
@@ -54,8 +53,8 @@ function Layout() {
   const health = useHealth();
   const location = useLocation();
 
-  // Empty DB → route to Settings onboarding (SPEC.md §13).
-  if (health.data && !health.data.onboarding.has_token && location.pathname !== "/settings") {
+  // No history yet → route to Settings onboarding (import an export).
+  if (health.data && !health.data.onboarding.has_history && location.pathname !== "/settings") {
     return <Navigate to="/settings" replace />;
   }
 
@@ -64,7 +63,6 @@ function Layout() {
       <LeftRail />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
-        <BrokenTokenBanner />
         <main className="min-h-0 flex-1 overflow-auto p-4">
           <ErrorBoundary>
             <Outlet />

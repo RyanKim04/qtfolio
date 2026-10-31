@@ -1,11 +1,11 @@
-"""Full SPEC.md §5 schema. Conventions (§2, §5):
+"""The full schema. Conventions:
 
 - Money = INTEGER cents in the row's native currency; unit prices and share
   quantities = INTEGER micro-units (1e-6) where sub-cent / fractional precision
   matters. Never SQLAlchemy Numeric on SQLite (silent float round-trip).
 - Datetimes stored naive UTC; dates are calendar dates in America/Toronto terms.
-- The whole schema ships in the initial migration; M1 only writes settings,
-  qt_tokens, accounts, symbols, candles, fx_rates, job_runs.
+- Questrade (retired 2026-10-27) survives only as frozen history: its
+  activities, balance/position snapshots and `accounts.broker = 'questrade'`.
 """
 
 from datetime import date, datetime
@@ -24,29 +24,22 @@ class Setting(Base):
     value_json: Mapped[str] = mapped_column(Text)
 
 
-class QtToken(Base):
-    __tablename__ = "qt_tokens"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # single row, id=1
-    refresh_token: Mapped[str | None] = mapped_column(Text)
-    access_token: Mapped[str | None] = mapped_column(Text)
-    api_server: Mapped[str | None] = mapped_column(String)
-    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
-    status: Mapped[str] = mapped_column(String, default="absent")  # absent | ok | broken
-    updated_at: Mapped[datetime] = mapped_column(DateTime)
-
-
 class Account(Base):
     __tablename__ = "accounts"
+    # DECISION: the PK keeps its historical name; for Wealthsimple accounts it
+    # holds the WS account id (alphanumeric, not a QT number) — renaming would churn every query.
     qt_account_id: Mapped[str] = mapped_column(String, primary_key=True)
     type: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String)
     tracked: Mapped[bool] = mapped_column(default=True)
+    # questrade = retired account, frozen snapshots are its ground truth;
+    # wealthsimple = CSV ledger account (state derived from its activities).
+    broker: Mapped[str] = mapped_column(String, default="questrade", server_default="questrade")
 
 
 class Symbol(Base):
     __tablename__ = "symbols"
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
-    qt_symbol_id: Mapped[int | None] = mapped_column(Integer)
     currency: Mapped[str | None] = mapped_column(String)
     exchange: Mapped[str | None] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(Text)
@@ -56,7 +49,7 @@ class Symbol(Base):
 
 class Activity(Base):
     __tablename__ = "activities"
-    # DECISION: qty/price in integer micro-units (spec §5 allows micro-units where
+    # DECISION: qty/price in integer micro-units (micro-units where
     # sub-cent precision matters — fractional DRIP shares, sub-cent unit prices).
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str] = mapped_column(String, index=True)
@@ -109,7 +102,7 @@ class FxRate(Base):
 
 class Candle(Base):
     __tablename__ = "candles"
-    # Chart series — floats are fine here per spec §2.
+    # Chart series — floats are fine here.
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
     interval: Mapped[str] = mapped_column(String, primary_key=True)
     ts: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
@@ -142,32 +135,9 @@ class SeriesDaily(Base):
     pnl_cad_cents: Mapped[int | None] = mapped_column(Integer)
     twr_index: Mapped[float | None] = mapped_column(Float)
     flows_cad_cents: Mapped[int | None] = mapped_column(Integer)
-
-
-class AnalystSnapshot(Base):
-    __tablename__ = "analyst_snapshots"
-    ticker: Mapped[str] = mapped_column(String, primary_key=True)
-    date: Mapped[date] = mapped_column(Date, primary_key=True)
-    source: Mapped[str] = mapped_column(String, primary_key=True)
-    target_low_cents: Mapped[int | None] = mapped_column(Integer)
-    target_mean_cents: Mapped[int | None] = mapped_column(Integer)
-    target_high_cents: Mapped[int | None] = mapped_column(Integer)
-    n_analysts: Mapped[int | None] = mapped_column(Integer)
-    rec_mean: Mapped[float | None] = mapped_column(Float)
-    rec_counts_json: Mapped[str | None] = mapped_column(Text)
-
-
-class AnalystAction(Base):
-    __tablename__ = "analyst_actions"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ticker: Mapped[str] = mapped_column(String, index=True)
-    date: Mapped[date | None] = mapped_column(Date)
-    firm: Mapped[str | None] = mapped_column(String)
-    action: Mapped[str | None] = mapped_column(String)
-    from_grade: Mapped[str | None] = mapped_column(String)
-    to_grade: Mapped[str | None] = mapped_column(String)
-    pt_old_cents: Mapped[int | None] = mapped_column(Integer)
-    pt_new_cents: Mapped[int | None] = mapped_column(Integer)
+    # Cumulative CAD gain/loss from USD/CAD moves on USD exposure (since inception).
+    # Investment P&L = pnl_cad_cents − fx_gain_cad_cents. See series.fx_translation_series.
+    fx_gain_cad_cents: Mapped[int | None] = mapped_column(Integer)
 
 
 class JobRun(Base):
@@ -178,6 +148,19 @@ class JobRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String)  # running | success | error
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class TfsaTransaction(Base):
+    """Hand-entered TFSA room ledger (services/tfsa.py) — every institution the
+    owner has used, independent of the broker activities above."""
+    __tablename__ = "tfsa_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    institution: Mapped[str] = mapped_column(String)
+    type: Mapped[str] = mapped_column(String)  # contribution | withdrawal | transfer
+    amount_cad_cents: Mapped[int] = mapped_column(Integer)  # positive; `type` carries the direction
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 Index("ix_job_runs_name_started", JobRun.job_name, JobRun.started_at.desc())

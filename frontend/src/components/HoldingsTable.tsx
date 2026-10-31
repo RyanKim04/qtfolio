@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { HoldingRow } from "../api/types";
 import { useCurrency } from "../App";
-import { fmtMoney, fmtPct, fmtQty, fmtSignedMoney, pnlClass } from "../lib/format";
+import { fmtEtTime, fmtMoney, fmtPct, fmtQty, fmtSignedMoney, pnlClass } from "../lib/format";
 import { Sparkline } from "./Sparkline";
 
 type SortKey = keyof Pick<
@@ -72,7 +72,17 @@ export function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
             </td>
             <td className="num px-2 py-1.5 text-right">{fmtQty(r.qty)}</td>
             <td className="num px-2 py-1.5 text-right">{fmtMoney(r.avg_cost, r.currency)}</td>
-            <td className="num px-2 py-1.5 text-right">{fmtMoney(r.last, r.currency)}</td>
+            <td className="num px-2 py-1.5 text-right">
+              {r.session && (
+                <span
+                  className="mr-1 text-[10px] text-muted"
+                  title={`${r.session === "post" ? "After-hours" : "Pre-market"} price · ${fmtEtTime(r.price_time)}`}
+                >
+                  {r.session === "post" ? "AH" : "PM"}
+                </span>
+              )}
+              {fmtMoney(r.last, r.currency)}
+            </td>
             <td className="num px-2 py-1.5 text-right">{fmtMoney(r.market_value, currency)}</td>
             <td className="num px-2 py-1.5 text-right text-muted">{fmtPct(r.weight, false)}</td>
             <td className={`num px-2 py-1.5 text-right ${pnlClass(r.day_pnl)}`}>{fmtSignedMoney(r.day_pnl, currency)}</td>

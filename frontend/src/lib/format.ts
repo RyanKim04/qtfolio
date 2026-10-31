@@ -53,3 +53,13 @@ function formatIn(s: number): string {
   if (s < 3600) return `in ${Math.floor(s / 60)} min`;
   return `in ${Math.floor(s / 3600)} h`;
 }
+
+export function fmtEtTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return `${new Date(iso).toLocaleString("en-CA", {
+    timeZone: "America/Toronto",
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  })} ET`;
+}

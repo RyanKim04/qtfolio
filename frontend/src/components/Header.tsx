@@ -3,20 +3,12 @@ import { useCurrency } from "../App";
 import type { Currency } from "../api/types";
 import { fmtMoney, fmtPct, fmtSignedMoney, pnlClass } from "../lib/format";
 
-function syncDot(status: "ok" | "warn" | "err"): string {
-  if (status === "ok") return "bg-up";
-  if (status === "warn") return "bg-accent";
-  return "bg-down";
-}
-
 export function Header() {
   const { currency, setCurrency } = useCurrency();
   const summary = useSummary(currency);
   const health = useHealth();
 
-  const token = health.data?.token.status;
   const jobsOk = health.data?.jobs.every((j) => !j.last_run || j.last_run.status !== "error") ?? true;
-  const dot = token === "broken" ? "err" : token === "ok" && jobsOk ? "ok" : "warn";
 
   const s = summary.data;
   return (
@@ -46,8 +38,8 @@ export function Header() {
           ))}
         </div>
         <span
-          className={`h-2 w-2 rounded-full ${syncDot(dot)}`}
-          title={`token: ${token ?? "…"}${jobsOk ? "" : " · a job failed — see Settings"}`}
+          className={`h-2 w-2 rounded-full ${jobsOk ? "bg-up" : "bg-down"}`}
+          title={jobsOk ? "jobs ok" : "a job failed — see Settings"}
         />
       </div>
     </header>

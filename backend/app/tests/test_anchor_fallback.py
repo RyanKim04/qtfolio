@@ -1,4 +1,4 @@
-"""Broker posting lag (§4.2): the newest snapshot can contradict recorded
+"""Broker posting lag: the newest snapshot can contradict recorded
 activities (trades executed but not yet posted). recompute() must fall back to
 the newest CONSISTENT anchor, extend the ledger forward, and keep capital-in on
 pure flows — instead of fabricating negative quantities through all of history."""
@@ -86,6 +86,55 @@ async def test_recompute_uses_newest_anchor_when_consistent(sessions):
     warnings = await history.get_setting(sessions, "reconciliation_warnings", [])
     assert not any("not yet posted" in w["message"] for w in warnings)
     assert not any("negative quantity" in w["message"] for w in warnings)
+
+
+async def seed_with_opening_residual(sessions):
+    """Account funded from empty, but the only snapshot carries 2 phantom XYZ
+    shares and $700 of cash beyond what the activities explain — so the backward
+    walk leaves a non-empty opening_qty AND a >$100 opening cash residual (the
+    minimal stand-in for the leveraged-ETF split / FX reconstruction noise seen in
+    production). Inception is still covered: the deposit is the first-ever event."""
+    d_dep, d_buy = TODAY - timedelta(days=20), TODAY - timedelta(days=19)
+    anchor = TODAY - timedelta(days=1)
+    async with sessions() as s:
+        s.add(Account(qt_account_id="A", tracked=True))
+        s.add(PositionSnapshot(date=anchor, account_id="A", ticker="XYZ", qty_micro=12 * M,
+                               price_micro=100 * M, market_value_cents=12 * 100_00, currency="CAD"))
+        s.add(BalanceSnapshot(date=anchor, account_id="A", currency="CAD", cash_cents=9_700_00,
+                              market_value_cents=12 * 100_00, total_equity_cents=9_700_00 + 12 * 100_00))
+        for back in range(25, -1, -1):
+            d = TODAY - timedelta(days=back)
+            s.add(Candle(ticker="XYZ", interval="OneDay", ts=datetime.combine(d, datetime.min.time()),
+                         o=100, h=100, l=100, c=100.0, v=1000))
+        await s.commit()
+    rows = assign_hashes([
+        act(d_dep, "deposits", action="con", net=10_000),
+        act(d_buy, "trades", action="buy", ticker="XYZ", qty=10, net=-1_000),
+    ])
+    await upsert_activities(sessions, rows)
+
+
+async def test_capital_in_ignores_opening_residual(sessions):
+    """Regression (2026-09-21): capital-in read 18,421 vs the true 19,000 because a
+    phantom split residual flipped the old `not opening_qty and residual<$100`
+    heuristic, so capital was seeded with the day-one VALUE instead of the day-one
+    FLOW. Inception coverage is a data-coverage fact (no activity predates the first
+    deposit) and must not depend on the backward walk zeroing out; capital-in must
+    equal net external deposits regardless of the opening residual."""
+    await seed_with_opening_residual(sessions)
+    result = await history.recompute(sessions, StubYf())
+    assert result["ok"]
+
+    warnings = await history.get_setting(sessions, "reconciliation_warnings", [])
+    assert any("opening residual" in w["message"] for w in warnings)
+
+    async with sessions() as s:
+        rows = list((await s.execute(select(SeriesDaily).order_by(SeriesDaily.date))).scalars())
+    # net deposits = $10,000 exactly — the phantom 2 XYZ + $700 cash are folded into
+    # P&L, never into capital. (The buggy seed would have produced ~$10,900.)
+    assert rows[-1].capital_in_cad_cents == 10_000_00
+    # and the day-one seed is the flow, not the reconstructed opening value
+    assert rows[0].capital_in_cad_cents == 10_000_00
 
 
 def test_extend_forward_applies_recorded_rows():

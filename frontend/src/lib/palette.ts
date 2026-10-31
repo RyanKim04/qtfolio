@@ -1,5 +1,5 @@
 // Chart categorical palette — blues/purples/grays only; green/red stay
-// reserved for P&L semantics (SPEC.md §14).
+// reserved for P&L semantics.
 export const COLORS = [
   "#635bff",
   "#2e90fa",

@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# qtv — launch, inspect and tear down an ISOLATED qtfolio instance for verification.
+#
+#   qtv up                      start backend + Vite on free ports with a scratch DB and a fake $HOME
+#   qtv doctor                  read-only: is this instance ours, alive, isolated, and usable?
+#   qtv api METHOD PATH [NAME] [curl args…]   call the backend, save the body as evidence
+#   qtv sql "SELECT …"          read-only query against the scratch DB
+#   qtv drop-export [CSV]       put a WS export into the fake ~/Downloads (default: synthetic fixture)
+#   qtv browse JOURNEY SCRIPT   run a Playwright journey (see browse.mjs) against the frontend
+#   qtv down                    stop what `up` started, keep the evidence, delete the scratch state
+#
+# Run selection: $QTV_RUN (a run id) or the most recent `up`. Never touches data/qtfolio.db,
+# data/backups, ~/Downloads, or a `make dev` instance on 8000/5173.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
+QTV_ROOT="${TMPDIR:-/tmp}"; QTV_ROOT="${QTV_ROOT%/}/qtfolio-verify"
+EVIDENCE_ROOT="$REPO/data/verify-evidence"   # data/ is gitignored — evidence may show balances
+PW_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/verify-qtfolio"
+PW_VERSION="1.52.0"
+
+die() { echo "qtv: $*" >&2; exit 1; }
+
+free_port() {  # first port in [$1, $1+100) with no listener
+  local p=$1
+  while lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; do p=$((p + 1)); [ $p -lt $(($1 + 100)) ] || die "no free port near $1"; done
+  echo "$p"
+}
+
+load_run() {
+  local id="${QTV_RUN:-}"
+  if [ -z "$id" ]; then [ -L "$QTV_ROOT/latest" ] || die "no run — 'qtv up' first"; id="$(basename "$(readlink "$QTV_ROOT/latest")")"; fi
+  RUN="$QTV_ROOT/$id"
+  [ -f "$RUN/state.env" ] || die "run $id has no state ($RUN/state.env) — already down?"
+  # shellcheck disable=SC1091
+  source "$RUN/state.env"
+}
+
+cmd_up() {
+  [ -x "$REPO/backend/.venv/bin/uvicorn" ] || die "backend venv missing — run 'make install'"
+  [ -x "$REPO/frontend/node_modules/.bin/vite" ] || die "frontend deps missing — run 'make install'"
+  RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
+  RUN="$QTV_ROOT/$RUN_ID"
+  EVIDENCE="$EVIDENCE_ROOT/$RUN_ID"
+  mkdir -p "$RUN/home/Downloads" "$EVIDENCE"
+  BACKEND_PORT="$(free_port 8100)"
+  FRONTEND_PORT="$(free_port 5273)"
+
+  # HOME → scratch: the Downloads watcher (ws_watch.WATCH_DIR = ~/Downloads) and yfinance's cache
+  # follow it. DB_PATH → scratch: migrations, data and db_backup (backups/ beside the DB) follow it.
+  # `exec` so the recorded pid IS the server (the port listener), not a wrapper shell.
+  (cd "$REPO/backend"; export HOME="$RUN/home" DB_PATH="$RUN/qtfolio.db"
+   exec nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT") \
+    >"$RUN/backend.log" 2>&1 </dev/null &
+  echo $! >"$RUN/backend.pid"
+  (cd "$REPO/frontend"; export QTFOLIO_API_PORT="$BACKEND_PORT"
+   exec nohup node_modules/.bin/vite --port "$FRONTEND_PORT" --strictPort) \
+    >"$RUN/frontend.log" 2>&1 </dev/null &
+  echo $! >"$RUN/frontend.pid"
+
+  cat >"$RUN/state.env" <<EOF
+RUN_ID=$RUN_ID
+RUN=$RUN
+EVIDENCE=$EVIDENCE
+BACKEND_PORT=$BACKEND_PORT
+FRONTEND_PORT=$FRONTEND_PORT
+BACKEND_PID=$(cat "$RUN/backend.pid")
+FRONTEND_PID=$(cat "$RUN/frontend.pid")
+EOF
+  ln -sfn "$RUN" "$QTV_ROOT/latest"
+  # shellcheck disable=SC1091
+  source "$RUN/state.env"
+
+  # Ready = migrations done AND the startup catch-up finished (scheduler running), not just a port.
+  local i
+  for i in $(seq 1 120); do
+    grep -q "startup sequence complete" "$RUN/backend.log" 2>/dev/null && break
+    kill -0 "$BACKEND_PID" 2>/dev/null || { tail -30 "$RUN/backend.log" >&2; die "backend exited during startup"; }
+    sleep 1
+  done
+  grep -q "startup sequence complete" "$RUN/backend.log" || die "backend not ready after 120s (see $RUN/backend.log)"
+  for i in $(seq 1 60); do
+    curl -fsS "http://127.0.0.1:$FRONTEND_PORT/api/health" >/dev/null 2>&1 && break
+    kill -0 "$FRONTEND_PID" 2>/dev/null || { tail -30 "$RUN/frontend.log" >&2; die "vite exited during startup"; }
+    sleep 1
+  done
+  curl -fsS "http://127.0.0.1:$FRONTEND_PORT/api/health" >/dev/null || die "vite not proxying /api after 60s"
+  echo "READY run=$RUN_ID"
+  echo "  frontend  http://127.0.0.1:$FRONTEND_PORT   (proxies /api → :$BACKEND_PORT)"
+  echo "  backend   http://127.0.0.1:$BACKEND_PORT"
+  echo "  evidence  $EVIDENCE"
+  echo "  scratch   $RUN   (fake HOME: $RUN/home, DB: $RUN/qtfolio.db)"
+  echo "  pin it:   export QTV_RUN=$RUN_ID"
+}
+
+cmd_doctor() {
+  load_run
+  local ok=1 lp
+  check() { if eval "$2" >/dev/null 2>&1; then echo "ok    $1"; else echo "FAIL  $1"; ok=0; fi; }
+  echo "run $RUN_ID · repo $(git -C "$REPO" rev-parse --short HEAD)$( [ -n "$(git -C "$REPO" status --porcelain)" ] && echo '+dirty')"
+  check "backend pid $BACKEND_PID alive" "kill -0 $BACKEND_PID"
+  lp="$(lsof -tnP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  check "port $BACKEND_PORT owned by our backend (listener pid ${lp:-none})" "[ '$lp' = '$BACKEND_PID' ]"
+  check "backend opened the scratch DB $RUN/qtfolio.db" "lsof -p $BACKEND_PID | grep -F '$RUN/qtfolio.db'"
+  check "backend did NOT open the real data/qtfolio.db" "! lsof -p $BACKEND_PID | grep -F '$REPO/data/qtfolio.db'"
+  check "backend HOME is the scratch home" "ps eww -p $BACKEND_PID | grep -F 'HOME=$RUN/home'"
+  check "startup catch-up finished" "grep -q 'startup sequence complete' '$RUN/backend.log'"
+  check "GET /api/health 200 on backend" "curl -fsS http://127.0.0.1:$BACKEND_PORT/api/health"
+  check "frontend pid $FRONTEND_PID alive" "kill -0 $FRONTEND_PID"
+  lp="$(lsof -tnP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+  check "port $FRONTEND_PORT owned by our vite (listener pid ${lp:-none})" "[ '$lp' = '$FRONTEND_PID' ]"
+  check "vite proxies to OUR backend (QTFOLIO_API_PORT=$BACKEND_PORT)" "ps eww -p $FRONTEND_PID | grep -F 'QTFOLIO_API_PORT=$BACKEND_PORT'"
+  check "GET /api/health 200 through the vite proxy" "curl -fsS http://127.0.0.1:$FRONTEND_PORT/api/health"
+  echo "health:"; curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null \
+    | "$REPO/backend/.venv/bin/python" -c 'import json,sys; h=json.load(sys.stdin); print("  onboarding", h["onboarding"], "· ws accounts", h["wealthsimple"]["accounts"], "· watch", h["wealthsimple"]["watch"]); [print("  job", j["name"], (j["last_run"] or {}).get("status"), (j["last_run"] or {}).get("detail")) for j in h["jobs"]]' || true
+  [ $ok = 1 ] && echo "DOCTOR OK" || { echo "DOCTOR FAILED — do not drive this instance"; exit 1; }
+}
+
+cmd_api() {  # qtv api GET /api/health [name] [curl args…]
+  load_run
+  local method="${1:?METHOD}" path="${2:?PATH}" name="${3:-}"; shift 2; [ $# -gt 0 ] && shift
+  [ -n "$name" ] || name="$(echo "$method$path" | tr -c 'A-Za-z0-9' '_' | sed 's/__*/_/g; s/_$//')"
+  mkdir -p "$EVIDENCE/api"
+  local out="$EVIDENCE/api/$name.json" code
+  code="$(curl -sS -X "$method" -o "$out" -w '%{http_code}' "http://127.0.0.1:$BACKEND_PORT$path" "$@")"
+  echo "$method $path → HTTP $code  (saved $out)" >&2
+  cat "$out"; echo
+  [[ "$code" == 2* ]]
+}
+
+cmd_sql() {
+  load_run
+  "$REPO/backend/.venv/bin/python" - "$RUN/qtfolio.db" "${1:?SQL}" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+cur = con.execute(sys.argv[2])
+print("\t".join(d[0] for d in cur.description or []))
+for row in cur:
+    print("\t".join("" if v is None else str(v) for v in row))
+PY
+}
+
+cmd_drop_export() {
+  load_run
+  local src="${1:-$SKILL_DIR/fixtures/ws-activities-synthetic.csv}"
+  local dst="$RUN/home/Downloads/activities-export-$(date +%Y-%m-%d).csv"
+  cp "$src" "$dst"
+  touch -t "$(date -v-1M +%Y%m%d%H%M.%S)" "$dst"   # already "settled" (watcher skips files < 2 s old)
+  echo "dropped $src → $dst"
+}
+
+cmd_browse() {
+  load_run
+  local journey="${1:?JOURNEY name}" script="${2:?SCRIPT path}"
+  if [ ! -d "$PW_CACHE/node_modules/playwright-core" ]; then
+    echo "qtv: installing playwright-core@$PW_VERSION into $PW_CACHE (one-time; drives system Google Chrome)" >&2
+    mkdir -p "$PW_CACHE"
+    npm install --silent --prefix "$PW_CACHE" "playwright-core@$PW_VERSION" >&2
+  fi
+  QTV_PW="$PW_CACHE" node "$SKILL_DIR/bin/browse.mjs" \
+    "http://127.0.0.1:$FRONTEND_PORT" "$EVIDENCE/$journey" "$(cd "$(dirname "$script")" && pwd)/$(basename "$script")"
+}
+
+cmd_down() {
+  load_run
+  local pid
+  for pid in "$FRONTEND_PID" "$BACKEND_PID"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for _ in $(seq 1 20); do
+    kill -0 "$BACKEND_PID" 2>/dev/null || kill -0 "$FRONTEND_PID" 2>/dev/null || break
+    sleep 0.5
+  done
+  for pid in "$FRONTEND_PID" "$BACKEND_PID"; do kill -KILL "$pid" 2>/dev/null || true; done
+  mkdir -p "$EVIDENCE/logs"
+  cp "$RUN/backend.log" "$RUN/frontend.log" "$EVIDENCE/logs/" 2>/dev/null || true
+  case "$RUN" in "$QTV_ROOT"/*) rm -rf "$RUN" ;; *) die "refusing to delete $RUN (outside $QTV_ROOT)" ;; esac
+  [ "$(readlink "$QTV_ROOT/latest" 2>/dev/null)" = "$RUN" ] && rm -f "$QTV_ROOT/latest"
+  lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1 && echo "WARN port $BACKEND_PORT still listening" >&2
+  lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1 && echo "WARN port $FRONTEND_PORT still listening" >&2
+  echo "DOWN run=$RUN_ID · scratch removed · evidence kept at $EVIDENCE"
+}
+
+case "${1:-}" in
+  up) shift; cmd_up "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
+  api) shift; cmd_api "$@" ;;
+  sql) shift; cmd_sql "$@" ;;
+  drop-export) shift; cmd_drop_export "$@" ;;
+  browse) shift; cmd_browse "$@" ;;
+  down) shift; cmd_down "$@" ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

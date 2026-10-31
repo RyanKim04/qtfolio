@@ -1,10 +1,20 @@
-"""§4.2/§7: multiset-aware dedup — occurrence-indexed hashes, overlapping syncs,
-cross-source (API vs CSV) collapse, and the importer's header mapping."""
+"""Multiset-aware dedup — occurrence-indexed hashes, overlapping
+imports, and cross-source collapse (the rules every stored hash was built on)."""
 
 from datetime import date
 
 from app.services.activities import assign_hashes, upsert_activities
-from app.services.importer import parse_export
+
+
+def div_row(ticker, net=371, desc=None, td=date(2026, 6, 26), txn=date(2026, 6, 26),
+            account="A", action="div"):
+    return {
+        "account_id": account, "trade_date": td, "transaction_date": txn, "settlement_date": txn,
+        "type": "dividends", "action": action, "ticker": ticker, "qty_micro": 0, "price_micro": 0,
+        "gross_amount_cents": net, "commission_cents": 0, "net_amount_cents": net,
+        "currency": "USD", "description": desc or "INVESCO NASDAQ 100 ETF CASH DIV ON 12 SHS REC 06/22/26 PAY 06/26/26",
+        "raw_json": "{}",
+    }
 
 
 def row(d, ticker="AAPL", qty=10_000_000, net=-170000, desc="BUY AAPL", account="A", type_="trades"):
@@ -70,18 +80,12 @@ def test_distinct_rows_differing_only_in_description_both_survive():
     assert hashed[0]["hash"] != hashed[1]["hash"]  # occupy occurrence 0 and 1
 
 
-def test_importer_maps_questrade_export_headers():
-    csv_data = (
-        "Transaction Date,Settlement Date,Action,Symbol,Description,Quantity,Price,"
-        "Gross Amount,Commission,Net Amount,Currency,Account #,Activity Type,Account Type\n"
-        "2023-05-01,2023-05-03,Buy,MSFT,BOUGHT 5 MSFT,5,300.00,-1500.00,-4.95,-1504.95,USD,111,Trades,Margin\n"
-        "2023-05-02,2023-05-02,CON,,CONTRIBUTION,,,2000.00,,2000.00,CAD,111,Deposits,TFSA\n"
-    ).encode()
-    parsed = parse_export("activities.csv", csv_data)
-    assert parsed["errors"] == []
-    assert len(parsed["rows"]) == 2
-    trade, deposit = parsed["rows"]
-    assert trade["ticker"] == "MSFT" and trade["qty_micro"] == 5_000_000
-    assert trade["net_amount_cents"] == -150495 and trade["currency"] == "USD"
-    assert trade["transaction_date"] == date(2023, 5, 1) and trade["account_id"] == "111"
-    assert deposit["type"] == "deposits" and deposit["net_amount_cents"] == 200000
+async def test_same_dividend_under_clean_and_registry_symbol_dedups(sessions):
+    """Regression (2026-09-21): the SAME dividend arrived once with a registry-key
+    symbol + trade_date (bootstrap) and again with a clean ticker, no trade_date
+    (re-sync after a new API key). The symbol was in the dedup key, so it landed
+    twice and double-counted P&L. Dividends now dedup symbol-free."""
+    boot = div_row("H082968", td=date(2026, 6, 26), txn=date(2026, 6, 26))
+    resync = div_row("QQQM", td=None, txn=date(2026, 6, 26))
+    assert await upsert_activities(sessions, assign_hashes([boot])) == 1
+    assert await upsert_activities(sessions, assign_hashes([resync])) == 0

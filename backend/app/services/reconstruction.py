@@ -1,9 +1,9 @@
-"""Backward portfolio reconstruction — SPEC.md §6.
+"""Backward portfolio reconstruction.
 
 Anchors at a known EOD state (live snapshot) and walks activities newest →
 oldest, reversing each. Correct for exactly the window the data covers; the
 residual state at the window edge IS the opening balance. Pure functions — the
-§7 test fixtures drive this directly.
+test_reconstruction fixtures drive this directly.
 
 Sign conventions (forward semantics; reversal subtracts):
 - qty: buys/DRIP/journal-in positive, sells/journal-out negative (micro-shares)
@@ -52,12 +52,16 @@ def classify(row: dict) -> str:
         return "fx"
     if "interest" in t:
         return "interest"
-    if "fee" in t or "rebate" in t:
+    if "fee" in t or "rebate" in t or "tax" in t:
         return "fee"
     if "transfer" in t or "journal" in t or "corporate" in t:
         return "journal"
     if t == "other" and row.get("ticker") and row.get("qty_micro"):
         return "journal"
+    # DECISION: a symbol-less, quantity-less "Other" row is a cash-only charge
+    # (Questrade posts HST on the transfer-out fee this way) — fee semantics, no flow.
+    if t == "other" and not row.get("qty_micro") and row.get("net_amount_cents"):
+        return "fee"
     return "unknown"
 
 
@@ -77,7 +81,7 @@ def detect_split_journal_pairs(
 ) -> list[tuple[str, int, int, date, float]]:
     """Broker-posted split journals: same ticker, out-row + in-row near a known
     split date, in ≈ -out × factor. Must not be double-applied on top of the
-    factor (§6.3 / §16). Returns (ticker, out_id, in_id, split_date, factor)."""
+    factor. Returns (ticker, out_id, in_id, split_date, factor)."""
     pairs = []
     by_ticker: dict[str, list[dict]] = {}
     for r in activities:
@@ -219,6 +223,122 @@ def walk_backward(
     return res
 
 
+TRANSFER_MATCH_DAYS = 7
+
+
+def match_transfers(activities: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Broker-to-broker transfers (Questrade TFO → Wealthsimple SecurityTransfer,
+    and the cash legs that settle the fee/residual balances) between TRACKED
+    accounts are internal: zero external flow, and the two legs must land on the
+    SAME day or the aggregate ledger double-counts (or drops) the assets while
+    they are in transit. Matched pairs are re-dated to the later leg — the
+    assets stay where they were until they arrive.
+
+    Unmatched legs came from / went to an untracked institution: a cash leg is
+    retyped as a deposit/withdrawal (a real external flow); an in-kind leg is
+    kept as a journal with a warning (its value enters without a capital-in
+    flow). Returns (rows, warnings); changed rows are copies."""
+    rows = [dict(r) for r in activities]
+    legs = [
+        r for r in rows
+        if "transfer" in (r.get("type") or "").lower() and r.get("transaction_date")
+        and ((r.get("ticker") and r.get("qty_micro")) or (not r.get("qty_micro") and r.get("net_amount_cents")))
+    ]
+    legs.sort(key=lambda r: (r["transaction_date"], r.get("id") or 0))
+    warnings: list[dict] = []
+    matched: set[int] = set()
+
+    def key(r: dict) -> tuple:
+        if r.get("ticker") and r.get("qty_micro"):
+            return ("sec", r["ticker"], abs(r["qty_micro"]))
+        return ("cash", r.get("currency") or "CAD", abs(r["net_amount_cents"]))
+
+    def sign(r: dict) -> int:
+        v = r["qty_micro"] if key(r)[0] == "sec" else r["net_amount_cents"]
+        return 1 if v > 0 else -1
+
+    for i, a in enumerate(legs):
+        if i in matched:
+            continue
+        best = None
+        for j in range(i + 1, len(legs)):
+            b = legs[j]
+            gap = (b["transaction_date"] - a["transaction_date"]).days
+            if gap > TRANSFER_MATCH_DAYS:
+                break
+            if j in matched or b["account_id"] == a["account_id"]:
+                continue
+            if key(b) == key(a) and sign(b) == -sign(a):
+                best = j
+                break
+        if best is None:
+            continue
+        matched.update((i, best))
+        b = legs[best]
+        a["transaction_date"] = b["transaction_date"] = max(a["transaction_date"], b["transaction_date"])
+
+    for i, r in enumerate(legs):
+        if i in matched:
+            continue
+        d = r["transaction_date"].isoformat()
+        if key(r)[0] == "cash":
+            r["type"] = "deposits" if r["net_amount_cents"] > 0 else "withdrawals"
+            warnings.append({"date": d, "ticker": None,
+                             "message": f"cash transfer {r['net_amount_cents'] / 100:+.2f} {r.get('currency')} has no "
+                                        "counterpart in a tracked account — counted as an external deposit/withdrawal"})
+        else:
+            warnings.append({"date": d, "ticker": r["ticker"],
+                             "message": f"in-kind transfer of {r['qty_micro'] / 1e6:g} sh has no counterpart in a "
+                                        "tracked account — its value enters/leaves without a capital-in flow"})
+    return rows, warnings
+
+
+class LedgerState:
+    """Exact state of ledger-only accounts (Wealthsimple: no balances API, so
+    the CSV activity history from account opening IS the ground truth) at any
+    date, in the same back-adjusted units walk_backward uses.
+
+    Built from one zero-anchored backward walk: with anchor 0, the walk's
+    opening state is −(all effects) and its EOD state at d is −(effects after d),
+    so state(d) = daily(d) − opening. Exact because the back-adjusted walk is
+    linear in its anchor; using the walk itself keeps split handling identical."""
+
+    def __init__(self, activities: list[dict], end: date, splits: dict[str, dict[date, float]] | None = None):
+        dated = [r for r in activities if r.get("transaction_date")]
+        self._first = min((r["transaction_date"] for r in dated), default=None)
+        self._end = end
+        if self._first is None:
+            return
+        z = walk_backward({}, {}, end, dated, BACK_ADJUSTED, splits)
+        self._daily_qty, self._daily_cash = z.daily_qty, z.daily_cash
+        self._total_qty = {t: -q for t, q in z.opening_qty.items()}
+        self._total_cash = {c: -v for c, v in z.opening_cash.items()}
+
+    def at(self, d: date) -> tuple[dict[str, int], dict[str, int]]:
+        if self._first is None or d < self._first:
+            return {}, {}
+        if d >= self._end:
+            return dict(self._total_qty), dict(self._total_cash)
+        qty = dict(self._total_qty)
+        for t, q in self._daily_qty.get(d, {}).items():
+            qty[t] = qty.get(t, 0) + q
+        cash = dict(self._total_cash)
+        for c, v in self._daily_cash.get(d, {}).items():
+            cash[c] = cash.get(c, 0) + v
+        return {t: q for t, q in qty.items() if q}, cash
+
+
+def add_states(*states: tuple[dict[str, int], dict[str, int]]) -> tuple[dict[str, int], dict[str, int]]:
+    qty: dict[str, int] = {}
+    cash: dict[str, int] = {}
+    for q, c in states:
+        for t, v in q.items():
+            qty[t] = qty.get(t, 0) + v
+        for cur, v in c.items():
+            cash[cur] = cash.get(cur, 0) + v
+    return {t: v for t, v in qty.items() if v}, cash
+
+
 def has_negative_qty(res: ReconResult) -> bool:
     return any("negative quantity" in w["message"] or "is negative" in w["message"] for w in res.warnings)
 
@@ -226,9 +346,9 @@ def has_negative_qty(res: ReconResult) -> bool:
 def extend_forward(res: ReconResult, activities: list[dict], start: date, end: date) -> None:
     """Carry the ledger FORWARD from the EOD state at `start` through `end`,
     applying whatever activities ARE recorded in that span. Used when the
-    newest snapshot contradicts recorded history (broker posting lag, §4.2):
+    newest snapshot contradicts recorded history (broker posting lag):
     the walk anchors at the last consistent snapshot and this extension keeps
-    the series current; §6.6 ground-truth pinning corrects the totals at every
+    the series current; snapshot ground-truth pinning (series.py) corrects the totals at every
     real snapshot in the span."""
     qty = dict(res.daily_qty.get(start, {}))
     cash = dict(res.daily_cash.get(start, {}))

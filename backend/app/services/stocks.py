@@ -1,25 +1,23 @@
-"""Stock detail data — SPEC.md §8.4 (minus S/R, owner-deferred §17).
+"""Stock detail data (minus support/resistance, owner-deferred).
 
-Owned tickers get full treatment; any ticker works read-only (resolved via
-symbol search on first visit). Questrade candles only on this page — never
-mixed with yfinance series (§16). Intraday history is whatever Questrade has:
-fetch what's available, don't fight it.
+Owned tickers get full treatment; any ticker works read-only (resolved on
+Yahoo on first visit). Since the move to Wealthsimple every bar on this page is
+yfinance (split-adjusted OHLC, regular session) — one source per chart.
+Intraday history is whatever Yahoo keeps: fetch what's available, don't fight it.
 """
 
-import asyncio
 import logging
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ..config import utcnow
 from ..fx import FxService
 from ..models import Activity, Candle, Symbol
-from ..questrade.client import QuestradeClient
-from . import candles as candle_svc
+from ..yf import YfService, to_yf_symbol
 from . import indicators as ind
+from .portfolio import PortfolioService
 from .reconstruction import classify
 
 log = logging.getLogger(__name__)
@@ -29,7 +27,6 @@ ET = ZoneInfo("America/New_York")
 QT_INTERVAL = {"5m": "FiveMinutes", "15m": "FifteenMinutes", "1h": "OneHour", "1d": "OneDay", "1w": "OneDay"}
 INTRADAY_WINDOW_DAYS = {"FiveMinutes": 10, "FifteenMinutes": 30, "OneHour": 90}
 DAILY_LOOKBACK_DAYS = 780  # ~2 years of trading days: 52w extremes + EMA200 warmup
-FETCH_TTL = 300
 
 SEMI_TICKERS = {"NVDA", "AMD", "SOXL", "SOXS", "SMH", "SOXX", "AVGO", "TSM", "MU", "INTC", "ASML", "AMAT"}
 
@@ -39,11 +36,11 @@ def default_benchmark(ticker: str) -> str:
 
 
 class StockService:
-    def __init__(self, sessions: async_sessionmaker, qt: QuestradeClient, fx: FxService):
+    def __init__(self, sessions: async_sessionmaker, yf: YfService, fx: FxService, portfolio: PortfolioService):
         self._sessions = sessions
-        self._qt = qt
+        self._yf = yf
         self._fx = fx
-        self._fetched_at: dict[tuple[str, str], float] = {}
+        self._portfolio = portfolio
 
     # -- symbols ----------------------------------------------------------
 
@@ -51,14 +48,9 @@ class StockService:
         t = ticker.upper()
         async with self._sessions() as session:
             row = await session.get(Symbol, t)
-        if row and row.qt_symbol_id:
+        if row and row.currency:
             return row
-        try:
-            matches = await self._qt.symbol_search(t)
-        except Exception as exc:
-            log.warning("symbol search failed for %s: %s", t, exc)
-            return row
-        info = next((m for m in matches if m.get("symbol") == t), None)
+        info = await self._yf.resolve(t)
         if not info:
             return row
         async with self._sessions() as session:
@@ -66,33 +58,20 @@ class StockService:
             if row is None:
                 row = Symbol(ticker=t)
                 session.add(row)
-            row.qt_symbol_id = info.get("symbolId")
-            row.currency = info.get("currency")
-            row.exchange = info.get("listingExchange")
-            row.description = info.get("description")
+            row.currency = info["currency"]
+            row.exchange = info["exchange"]
+            row.description = info["description"]
             await session.commit()
             return row
 
     # -- candles ----------------------------------------------------------
 
     async def _ensure_candles(self, sym: Symbol, qt_interval: str) -> None:
-        key = (sym.ticker, qt_interval)
-        now_ts = utcnow().timestamp()
-        if now_ts - self._fetched_at.get(key, 0) < FETCH_TTL:
-            return
-        self._fetched_at[key] = now_ts
-        try:
-            if qt_interval == "OneDay":
-                await candle_svc.backfill_daily(
-                    self._qt, self._sessions, sym.ticker, sym.qt_symbol_id,
-                    date.today() - timedelta(days=DAILY_LOOKBACK_DAYS),
-                )
-            else:
-                start = utcnow().replace(tzinfo=timezone.utc) - timedelta(days=INTRADAY_WINDOW_DAYS[qt_interval])
-                bars = await self._qt.candles(sym.qt_symbol_id, start, utcnow().replace(tzinfo=timezone.utc), qt_interval)
-                await candle_svc.upsert_bars(self._sessions, sym.ticker, qt_interval, bars)
-        except Exception as exc:
-            log.warning("candle fetch failed for %s/%s: %s", sym.ticker, qt_interval, exc)
+        if qt_interval == "OneDay":
+            start = date.today() - timedelta(days=DAILY_LOOKBACK_DAYS)
+        else:
+            start = date.today() - timedelta(days=INTRADAY_WINDOW_DAYS[qt_interval])
+        await self._yf.refresh_bars(sym.ticker, to_yf_symbol(sym.ticker, sym.exchange), qt_interval, start)
 
     async def _load_bars(self, ticker: str, qt_interval: str) -> list[dict]:
         async with self._sessions() as session:
@@ -111,10 +90,9 @@ class StockService:
             dedup[key] = {"ts": r.ts, "date": r.ts.date(), "o": r.o, "h": r.h, "l": r.l, "c": r.c, "v": r.v or 0}
         bars = [dedup[k] for k in sorted(dedup)]
         if qt_interval != "OneDay":
-            # Regular session only (09:30–16:00 ET): Questrade includes extended
-            # hours, which buries the session in flat pre/post-market bars.
-            # Hourly bars align to the top of the hour, so the 09:00 bar carries
-            # the open — its lower bound is 09:00.
+            # Regular session only (09:30–16:00 ET). Yahoo already omits
+            # extended hours; kept as defense for Questrade-era cached bars, whose
+            # hourly bars align to the top of the hour (09:00 carries the open).
             lower = 9 * 60 if qt_interval == "OneHour" else 9 * 60 + 30
             def in_session(b: dict) -> bool:
                 et = b["ts"].replace(tzinfo=timezone.utc).astimezone(ET)
@@ -127,7 +105,7 @@ class StockService:
 
     async def candles_payload(self, ticker: str, interval: str) -> dict | None:
         sym = await self.resolve(ticker)
-        if sym is None or not sym.qt_symbol_id:
+        if sym is None or not sym.currency:
             return None
         qt_interval = QT_INTERVAL[interval]
         await self._ensure_candles(sym, qt_interval)
@@ -137,7 +115,6 @@ class StockService:
         intraday = interval in ("5m", "15m", "1h")
 
         closes = [b["c"] for b in bars]
-        highs = [b["h"] for b in bars]
         lows = [b["l"] for b in bars]
         indicators: dict = {
             "ema20": ind.ema(closes, 20),
@@ -152,7 +129,7 @@ class StockService:
                 bars, lambda b: b["ts"].replace(tzinfo=timezone.utc).astimezone(ET).date()
             )
         else:
-            # Anchored VWAP preset: 52-week low (§8.4; click-to-anchor is §17).
+            # Anchored VWAP preset: 52-week low (click-to-anchor is deferred).
             window = lows[-252:] if len(lows) > 252 else lows
             if window:
                 anchor_idx = len(lows) - len(window) + window.index(min(window))
@@ -185,7 +162,7 @@ class StockService:
 
     async def levels(self, ticker: str) -> dict | None:
         sym = await self.resolve(ticker)
-        if sym is None or not sym.qt_symbol_id:
+        if sym is None or not sym.currency:
             return None
         await self._ensure_candles(sym, "OneDay")
         bars = await self._load_bars(sym.ticker, "OneDay")
@@ -211,27 +188,14 @@ class StockService:
 
     async def position(self, ticker: str, account_ids: list[str]) -> dict:
         t = ticker.upper()
-        qty = cost = mv = open_pnl = 0.0
-        day_pnl = None
-        total_cad = 0.0
-        for acc in account_ids:
-            try:
-                balances = await self._qt.balances(acc)
-                for cb in balances.get("combinedBalances", []):
-                    if cb.get("currency") == "CAD":
-                        total_cad += cb.get("totalEquity") or 0.0
-                for p in await self._qt.positions(acc):
-                    if p.get("symbol") != t or not (p.get("openQuantity") or 0):
-                        continue
-                    q = p["openQuantity"]
-                    qty += q
-                    cost += (p.get("averageEntryPrice") or 0.0) * q
-                    mv += p.get("currentMarketValue") or 0.0
-                    open_pnl += p.get("openPnl") or 0.0
-                    if p.get("dayPnl") is not None:
-                        day_pnl = (day_pnl or 0.0) + p["dayPnl"]
-            except Exception as exc:
-                log.warning("position fetch failed for %s/%s: %s", t, acc, exc)
+        pos = await self._portfolio.positions()
+        row = next((p for p in (pos or {}).get("rows", []) if p["ticker"] == t), None)
+        qty = row["qty"] if row else 0.0
+        mv = row["mv"] if row else 0.0
+        cost = row["cost"] if row and row["cost"] is not None else 0.0
+        open_pnl = mv - cost if row and row["cost"] is not None else None
+        day_pnl = row["day_pnl"] if row else None
+        total_cad = await self._portfolio.total_equity_cad() or 0.0
 
         async with self._sessions() as session:
             sym = await session.get(Symbol, t)
@@ -263,22 +227,22 @@ class StockService:
             "ticker": t,
             "owned": qty > 0,
             "qty": qty,
-            "avg_cost": (cost / qty) if qty else None,
+            "avg_cost": row["avg_cost"] if row else None,
             "market_value": mv,
             "currency": sym.currency if sym else None,
             "weight": (mv_cad / total_cad * 100) if total_cad and qty else None,
             "open_pnl": open_pnl if qty else None,
-            "open_pnl_pct": (open_pnl / cost * 100) if cost else None,
+            "open_pnl_pct": (open_pnl / cost * 100) if open_pnl is not None and cost else None,
             "day_pnl": day_pnl,
             "markers": markers,
         }
 
     async def rs_series(self, ticker: str, benchmark: str) -> dict:
         """Relative strength: close(ticker) / close(benchmark), indexed to 100.
-        Both legs from Questrade dailies — sources never mixed (§16)."""
+        Both legs from the same daily source — sources never mixed."""
         sym = await self.resolve(ticker)
         bench = await self.resolve(benchmark)
-        if not sym or not bench or not sym.qt_symbol_id or not bench.qt_symbol_id:
+        if not sym or not bench or not sym.currency or not bench.currency:
             return {"empty": True}
         await self._ensure_candles(sym, "OneDay")
         await self._ensure_candles(bench, "OneDay")

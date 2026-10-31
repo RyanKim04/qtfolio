@@ -1,5 +1,5 @@
-"""Valuation, seam rescaling, TWR — SPEC.md §6.5–§7. Pure math up top (unit-
-tested against the §7 fixtures), DB orchestration below.
+"""Valuation, seam rescaling, TWR. Pure math up top (unit-
+tested against the test_series fixtures), DB orchestration below.
 
 All values integer CAD cents until the final float conversion for the API.
 Forward-fill of closes per listing exchange falls out naturally: candles exist
@@ -74,6 +74,49 @@ def value_series(
     return out, warnings
 
 
+def fx_translation_series(
+    daily_qty: dict[date, dict[str, int]],
+    daily_cash: dict[date, dict[str, int]],
+    closes_cents: dict[str, dict[date, int]],
+    fx_micro: dict[date, int],
+    sym_currency: dict[str, str],
+) -> dict[date, int]:
+    """Cumulative CAD gain/loss from USD/CAD moves on USD-denominated exposure:
+    Σ_t E_usd(t-1) × (rate_t − rate_{t-1}), where E_usd is USD holdings value +
+    USD cash (in USD cents). Pairs with value_series — the currency-translation
+    component of CAD P&L; investment return is the residual (total − fx). CAD-only
+    portfolios return all-zeros. Output cumulative from the first date (=0 there),
+    so a window's FX P&L is cum[end] − cum[start]."""
+    fx = _FFill(fx_micro)
+    ffills = {t: _FFill(pts) for t, pts in closes_cents.items()}
+
+    def exposure(d: date) -> int:  # USD cents held on day d
+        e = daily_cash.get(d, {}).get("USD", 0)
+        for ticker, qty in daily_qty[d].items():
+            if sym_currency.get(ticker, "CAD") != "USD":
+                continue
+            ff = ffills.get(ticker)
+            close = ff.at(d, flat_backfill=True) if ff and not ff.empty else None
+            if close:
+                e += qty * close // MICRO
+        return e
+
+    out: dict[date, int] = {}
+    dates = sorted(daily_qty)
+    if not dates:
+        return out
+    cum = 0
+    out[dates[0]] = 0
+    prev_rate = fx.at(dates[0], flat_backfill=True) or MICRO
+    e_prev = exposure(dates[0])
+    for d in dates[1:]:
+        rate = fx.at(d, flat_backfill=True) or MICRO
+        cum += e_prev * (rate - prev_rate) // MICRO
+        out[d] = cum
+        prev_rate, e_prev = rate, exposure(d)
+    return out
+
+
 def flows_to_cad(flows: dict[date, dict[str, int]], fx_micro: dict[date, int]) -> dict[date, int]:
     fx = _FFill(fx_micro)
     out: dict[date, int] = {}
@@ -88,7 +131,7 @@ def flows_to_cad(flows: dict[date, dict[str, int]], fx_micro: dict[date, int]) -
 
 
 def apply_ground_truth(recon: dict[date, int], gt: dict[date, int]) -> dict[date, int]:
-    """§6.6: snapshots win, without seams. Before the first snapshot: one
+    """Snapshots win, without seams. Before the first snapshot: one
     constant factor. Between snapshots: linear factor interpolation. After the
     last: the last factor. A step discontinuity would print a phantom TWR
     return; rescaling forbids it."""
@@ -119,7 +162,7 @@ def apply_ground_truth(recon: dict[date, int], gt: dict[date, int]) -> dict[date
 
 
 def twr_index(values: dict[date, int], flows_cad: dict[date, int]) -> tuple[dict[date, float], list[dict]]:
-    """§7: r_t = (V_t − V_{t−1} − F_t) / (V_{t−1} + F_t), start-of-day flows.
+    """r_t = (V_t − V_{t−1} − F_t) / (V_{t−1} + F_t), start-of-day flows.
     Denominator ≤ 0 → r_t = 0, logged. Chained, 100 at series start."""
     warnings: list[dict] = []
     dates = sorted(values)
@@ -140,6 +183,24 @@ def twr_index(values: dict[date, int], flows_cad: dict[date, int]) -> tuple[dict
     return idx, warnings
 
 
+def apply_live_point(dates: list[date], values: dict[date, int], idx: dict[date, float],
+                     flows: dict[date, int], today: date, total_cents: int) -> bool:
+    """Price `today` live in place: override its stored row, or append it with
+    zero flow when the series stops short of today. Returns True if appended.
+    The day return is the same formula twr_index uses."""
+    appended = dates[-1] < today
+    if appended:
+        dates.append(today)
+        flows[today] = 0
+    prev = dates[-2]
+    values[today] = total_cents
+    flow = flows[today]
+    denom = values[prev] + flow
+    r = (values[today] - values[prev] - flow) / denom if denom > 0 else 0.0
+    idx[today] = idx[prev] * (1 + r)
+    return appended
+
+
 def daily_returns(idx: dict[date, float]) -> dict[date, float]:
     dates = sorted(idx)
     return {d: idx[d] / idx[prev] - 1 for prev, d in zip(dates, dates[1:]) if idx[prev]}
@@ -155,15 +216,23 @@ def range_start(all_dates: list[date], range_key: str) -> date:
     return all_dates[min(i, len(all_dates) - 1)]
 
 
+def trading_sample(dates: list[date], trading_days: set[date]) -> list[date]:
+    """The window's dates thinned to market days (weekends/holidays fold into the
+    next session), keeping the window start as the base and a live weekday end."""
+    keep = [d for d in dates[1:] if d in trading_days or (d == dates[-1] and d.weekday() < 5)]
+    return dates[:1] + keep
+
+
 def range_stats(
-    dates: list[date], values: dict[date, int], idx: dict[date, float], flows_cad: dict[date, int]
+    dates: list[date], values: dict[date, int], idx: dict[date, float], flows_cad: dict[date, int],
+    trading_days: set[date] | None = None,
 ) -> dict:
     if len(dates) < 2:
         return {"twr": None, "mwr": None, "max_drawdown": None, "vol": None, "best_day": None, "worst_day": None}
     s, e = dates[0], dates[-1]
     twr = idx[e] / idx[s] - 1 if idx.get(s) else None
 
-    # MWR (§7): −V(start) pseudo-flow, deposits negative, withdrawals positive, +V(end).
+    # MWR: −V(start) pseudo-flow, deposits negative, withdrawals positive, +V(end).
     # XIRR is annualized by definition; we convert to the PERIOD return so it sits
     # comparably next to the cumulative TWR (a 1-month window would otherwise
     # display an absurd annualized number). DECISION: mwr = (1+xirr)^(days/365) − 1.
@@ -187,7 +256,12 @@ def range_stats(
         if peak:
             maxdd = min(maxdd, v / peak - 1)
 
-    rets = {d: r for d, r in daily_returns({d: idx[d] for d in dates}).items()}
+    # Day returns over market sessions only: the series is calendar-daily, and its
+    # flat weekend/holiday rows would pad the sample with zeros and understate
+    # √252-annualized volatility by ~sqrt(5/7).
+    sample = trading_sample(dates, trading_days) if trading_days else dates
+    rets = daily_returns({d: idx[d] for d in sample})
+    prev_of = dict(zip(sample[1:], sample))
     vol = statistics.stdev(rets.values()) * (252**0.5) if len(rets) >= 2 else None
     best = max(rets, key=rets.get) if rets else None
     worst = min(rets, key=rets.get) if rets else None
@@ -197,6 +271,6 @@ def range_stats(
         "mwr_since": s.isoformat(),
         "max_drawdown": maxdd,
         "vol": vol,
-        "best_day": {"date": best.isoformat(), "r": rets[best]} if best else None,
-        "worst_day": {"date": worst.isoformat(), "r": rets[worst]} if worst else None,
+        "best_day": {"date": best.isoformat(), "prev": prev_of[best].isoformat(), "r": rets[best]} if best else None,
+        "worst_day": {"date": worst.isoformat(), "prev": prev_of[worst].isoformat(), "r": rets[worst]} if worst else None,
     }

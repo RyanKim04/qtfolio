@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import { useHoldings, useSummary } from "../api/hooks";
 import { useCurrency } from "../App";
-import { AiAnalyst } from "../components/AiAnalyst";
 import { AllocationDonut } from "../components/AllocationDonut";
 import { HoldingsTable } from "../components/HoldingsTable";
-import { fmtMoney, fmtPct, fmtSignedMoney, pnlClass } from "../lib/format";
+import { TfsaRoom } from "../components/TfsaRoom";
+import { fmtEtTime, fmtMoney, fmtPct, fmtRelTime, fmtSignedMoney, pnlClass } from "../lib/format";
 
 function Stat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
@@ -27,7 +27,7 @@ export function Dashboard() {
         <p className="text-down">Could not load portfolio data.</p>
         <p className="mt-1 text-muted">{err?.message}</p>
         <p className="mt-2 text-muted">
-          Check the Questrade connection in{" "}
+          Check data sources in{" "}
           <Link to="/settings" className="text-accent underline">
             Settings
           </Link>
@@ -40,9 +40,9 @@ export function Dashboard() {
   if (summary.data?.empty) {
     return (
       <div className="card p-6 text-[13px]">
-        <p>No tracked accounts yet.</p>
+        <p>No holdings yet.</p>
         <p className="mt-1 text-muted">
-          Paste a Questrade refresh token and pick accounts in{" "}
+          Import a Wealthsimple activities CSV in{" "}
           <Link to="/settings" className="text-accent underline">
             Settings
           </Link>
@@ -53,12 +53,36 @@ export function Dashboard() {
   }
 
   const s = summary.data;
+  const fresh = s?.freshness;
   return (
     <div className="space-y-4">
+      <div className="flex items-baseline justify-between gap-4">
+        {fresh && fresh.ledger_accounts > 0 && (
+          <p className="num text-[12px] text-muted">
+            Holdings as of Wealthsimple activity through {fresh.activity_through ?? "—"}
+            {fresh.last_import_at ? ` · imported ${fmtRelTime(fresh.last_import_at)}` : ""} · traded since?{" "}
+            <a href="https://my.wealthsimple.com/app/activity" target="_blank" rel="noreferrer" className="text-accent underline">
+              Download a fresh export
+            </a>{" "}
+            — it imports itself
+          </p>
+        )}
+        {s?.prices_as_of && (
+          <p className="num ml-auto shrink-0 text-[12px] text-muted">
+            Prices as of {fmtEtTime(s.prices_as_of)}
+            {s.price_session ? ` (${s.price_session === "post" ? "after-hours" : "pre-market"})` : ""}
+            {s.quotes_live ? (
+              <span className="text-up"> · live, streaming</span>
+            ) : (
+              " · closed until 4:00 a.m. ET pre-market"
+            )}
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-5 gap-2">
         <Stat label="Total value" value={s ? fmtMoney(s.total_value, currency) : "—"} />
         <Stat
-          label="Day change"
+          label={s?.extended_hours ? "Day change · incl. ext. hours" : "Day change"}
           value={s ? `${fmtSignedMoney(s.day_pnl, currency)} (${fmtPct(s.day_pnl_pct)})` : "—"}
           className={pnlClass(s?.day_pnl)}
         />
@@ -81,7 +105,8 @@ export function Dashboard() {
             <h2 className="text-[13px] font-medium">Holdings</h2>
             {holdings.data && !holdings.data.empty && (
               <span className="num text-[11px] text-muted">
-                cash {fmtMoney(holdings.data.cash_native?.CAD, "CAD")} · {fmtMoney(holdings.data.cash_native?.USD, "USD")}
+                cash {fmtMoney(holdings.data.cash_native?.CAD, "CAD")} · {fmtMoney(holdings.data.cash_native?.USD, "USD")} USD
+                {holdings.data.cash_weight != null && ` · ${fmtPct(holdings.data.cash_weight, false)} of total`}
               </span>
             )}
           </div>
@@ -93,10 +118,11 @@ export function Dashboard() {
             <p className="p-6 text-center text-[13px] text-muted">No open positions.</p>
           )}
         </section>
-        <AllocationDonut />
+        <div className="space-y-4">
+          <AllocationDonut />
+          <TfsaRoom />
+        </div>
       </div>
-
-      <AiAnalyst />
     </div>
   );
 }

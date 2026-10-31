@@ -1,4 +1,4 @@
-"""App configuration. Questrade tokens are NOT here — they rotate and live in the DB."""
+"""App configuration (optional `.env` at the repo root; no API keys are needed)."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,10 +16,7 @@ TZ = ZoneInfo("America/Toronto")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(REPO_ROOT / ".env"), extra="ignore")
 
-    anthropic_api_key: str = ""
-
     db_path: Path = DATA_DIR / "qtfolio.db"
-    token_backup_path: Path = DATA_DIR / "qt_token_backup.json"
 
 
 settings = Settings()

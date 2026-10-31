@@ -6,6 +6,7 @@ import type {
   Attribution,
   CompareResult,
   Currency,
+  DayBreakdown,
   Health,
   Holdings,
   ImportPreview,
@@ -20,8 +21,16 @@ import type {
   StockLevels,
   StockPosition,
   Summary,
-  TestResult,
+  TfsaRecordResult,
+  TfsaSummary,
+  TfsaTxnInput,
 } from "./types";
+
+// Backend prices come from Yahoo's streamer (seconds behind the tape), so the
+// dashboard polls briskly; each poll is a local, cached computation.
+const LIVE_MS = 5_000;
+// Performance charts end on a live point too — heavier endpoints, half the rate.
+const PERF_LIVE_MS = 30_000;
 
 export function useHealth() {
   return useQuery({
@@ -37,7 +46,7 @@ export function useSummary(currency: Currency) {
   return useQuery({
     queryKey: ["summary", currency],
     queryFn: () => api<Summary>(`/portfolio/summary?currency=${currency}`),
-    refetchInterval: 60_000,
+    refetchInterval: LIVE_MS,
     retry: 1,
   });
 }
@@ -46,7 +55,7 @@ export function useHoldings(currency: Currency) {
   return useQuery({
     queryKey: ["holdings", currency],
     queryFn: () => api<Holdings>(`/portfolio/holdings?currency=${currency}`),
-    refetchInterval: 60_000,
+    refetchInterval: LIVE_MS,
     retry: 1,
   });
 }
@@ -55,7 +64,7 @@ export function useAllocation(by: string, currency: Currency) {
   return useQuery({
     queryKey: ["allocation", by, currency],
     queryFn: () => api<Allocation>(`/portfolio/allocation?by=${by}&currency=${currency}`),
-    refetchInterval: 120_000,
+    refetchInterval: LIVE_MS,
     retry: 1,
   });
 }
@@ -70,26 +79,6 @@ export function useSettingsData() {
 function useInvalidateAll() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries();
-}
-
-export function usePasteToken() {
-  const invalidate = useInvalidateAll();
-  return useMutation({
-    mutationFn: (refresh_token: string) =>
-      api<{ ok: boolean; accounts: Account[] }>("/settings/qt-token", {
-        method: "POST",
-        body: JSON.stringify({ refresh_token }),
-      }),
-    onSuccess: invalidate,
-  });
-}
-
-export function useTestConnection() {
-  const invalidate = useInvalidateAll();
-  return useMutation({
-    mutationFn: () => api<TestResult>("/settings/qt-test", { method: "POST" }),
-    onSuccess: invalidate,
-  });
 }
 
 export function useSetAccounts() {
@@ -116,6 +105,7 @@ export function usePerfValue(range: RangeKey, baseline: "range" | "inception" = 
   return useQuery({
     queryKey: ["perf", "value", range, baseline],
     queryFn: () => api<PerfValueSeries>(`/performance/series?range=${range}&mode=value&baseline=${baseline}`),
+    refetchInterval: PERF_LIVE_MS,
     retry: 1,
   });
 }
@@ -125,6 +115,7 @@ export function usePerfIndexed(range: RangeKey, enabled: boolean) {
     queryKey: ["perf", "indexed", range],
     queryFn: () => api<PerfIndexedSeries>(`/performance/series?range=${range}&mode=indexed`),
     enabled,
+    refetchInterval: PERF_LIVE_MS,
     retry: 1,
   });
 }
@@ -134,6 +125,7 @@ export function usePerfStacked(range: RangeKey, enabled: boolean) {
     queryKey: ["perf", "stacked", range],
     queryFn: () => api<PerfStackedSeries>(`/performance/series?range=${range}&mode=stacked`),
     enabled,
+    refetchInterval: PERF_LIVE_MS,
     retry: 1,
   });
 }
@@ -142,6 +134,17 @@ export function useAttribution(range: RangeKey) {
   return useQuery({
     queryKey: ["perf", "attribution", range],
     queryFn: () => api<Attribution>(`/performance/attribution?range=${range}`),
+    refetchInterval: PERF_LIVE_MS,
+    retry: 1,
+  });
+}
+
+export function usePerfDay(date: string, prev: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["perf", "day", date, prev],
+    queryFn: () => api<DayBreakdown>(`/performance/day?date=${date}&prev=${prev}`),
+    enabled,
+    staleTime: 5 * 60_000, // past sessions don't move; fetched on first hover
     retry: 1,
   });
 }
@@ -189,6 +192,7 @@ export function useCompare(symbols: string[], range: RangeKey) {
     enabled: symbols.length > 0,
     retry: 1,
     staleTime: 5 * 60_000,
+    refetchInterval: PERF_LIVE_MS, // benchmarks' today point is a live quote
   });
 }
 
@@ -196,9 +200,8 @@ async function upload<T>(path: string, file: File, commit: boolean): Promise<T> 
   const form = new FormData();
   form.append("file", file);
   form.append("commit", String(commit));
-  const res = await fetch(`/api${path}`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+  // headers: {} drops api()'s JSON Content-Type — the browser sets multipart + boundary.
+  return api<T>(path, { method: "POST", body: form, headers: {} });
 }
 
 export function useImportPreview() {
@@ -210,5 +213,40 @@ export function useImportCommit() {
   return useMutation({
     mutationFn: (file: File) => upload<ImportResult>("/import/activities", file, true),
     onSuccess: () => qc.invalidateQueries(),
+  });
+}
+
+export function useTfsa() {
+  return useQuery({ queryKey: ["tfsa"], queryFn: () => api<TfsaSummary>("/tfsa") });
+}
+
+// Mirrors the activities import: commit=false previews the warnings, commit=true writes.
+export function useTfsaRecord() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ commit, ...txn }: TfsaTxnInput & { commit: boolean }) =>
+      api<TfsaRecordResult>("/tfsa/transactions", { method: "POST", body: JSON.stringify({ ...txn, commit }) }),
+    onSuccess: (r) => {
+      if (r.phase === "committed") qc.invalidateQueries({ queryKey: ["tfsa"] });
+    },
+  });
+}
+
+export function useTfsaDelete() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<{ ok: boolean }>(`/tfsa/transactions/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tfsa"] }),
+  });
+}
+
+export function useTfsaConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cfg: {
+      limits: Record<string, number | string | null>;
+      anchor: { year: number; room: number | string } | null;
+    }) => api<unknown>("/tfsa/config", { method: "PUT", body: JSON.stringify(cfg) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tfsa"] }),
   });
 }

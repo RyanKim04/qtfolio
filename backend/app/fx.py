@@ -1,4 +1,4 @@
-"""Bank of Canada Valet — daily USDCAD (FXUSDCAD), SPEC.md §3.
+"""Bank of Canada Valet — daily USDCAD (FXUSDCAD).
 
 Rates persist as INTEGER micro-units (USDCAD × 1e6). M1 needs only the latest
 rate for the header currency toggle; M2's bootstrap backfills history.
@@ -49,6 +49,12 @@ class FxService:
         return row.date, Decimal(row.usdcad_micro) / MICRO
 
     async def _fetch_recent(self) -> None:
+        async with self._sessions() as session:
+            newest = (await session.execute(select(FxRate.date).order_by(FxRate.date.desc()).limit(1))).scalar_one_or_none()
+        if newest is not None and (date.today() - newest).days > 10:
+            # A long absence outruns the 10-observation window — fill the gap.
+            await self.backfill(newest)
+            return
         resp = await self._http.get(VALET_URL, params={"recent": 10})
         resp.raise_for_status()
         await self._store(resp.json().get("observations", []))

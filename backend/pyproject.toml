@@ -1,7 +1,7 @@
 [project]
 name = "qtfolio-backend"
 version = "0.1.0"
-description = "qtfolio backend — local Questrade portfolio terminal"
+description = "qtfolio backend — local portfolio terminal"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",
@@ -16,15 +16,12 @@ dependencies = [
     "yfinance>=0.2.55,<0.3",
     "pyxirr>=0.10",
     "python-multipart>=0.0.18",
-    "openpyxl>=3.1",
-    "anthropic>=0.90",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "respx>=0.22",
 ]
 
 [tool.uv]

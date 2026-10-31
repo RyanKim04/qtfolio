@@ -1,4 +1,4 @@
-"""§9 indicators verified against a reference implementation (pandas, which
+"""Indicators verified against a reference implementation (pandas, which
 ships with yfinance) on a fixture series — M3 acceptance requirement.
 
 Seeding conventions differ (we SMA-seed EMAs per TA-Lib; pandas ewm seeds on
