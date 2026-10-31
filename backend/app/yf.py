@@ -15,7 +15,7 @@ import asyncio
 import logging
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -364,29 +364,80 @@ class YfService:
             log.warning("yfinance closes unavailable for %s (%s); serving cache", yf_symbol, exc)
             return
         self._fetched_at[yf_symbol] = (now_ts, start)
+        await self._store_daily(yf_symbol, bars)
+
+    async def _store_daily(self, yf_symbol: str, bars: list[tuple]) -> None:
         if not bars:
             return
+        # Chunked multi-row upserts: decades of factor history are thousands of rows.
+        rows = [{"ticker": yf_symbol, "interval": YF_INTERVAL, "ts": datetime.combine(d, time.min),
+                 "o": o, "h": h, "l": l, "c": c, "v": v} for d, o, h, l, c, v in bars]
         async with self._sessions() as session:
-            for d, o, h, l, c, v in bars:
-                ts = datetime.combine(d, time.min)
-                stmt = sqlite_insert(Candle).values(
-                    ticker=yf_symbol, interval=YF_INTERVAL, ts=ts, o=o, h=h, l=l, c=c, v=v,
-                ).on_conflict_do_update(
+            for i in range(0, len(rows), 500):
+                stmt = sqlite_insert(Candle).values(rows[i:i + 500])
+                stmt = stmt.on_conflict_do_update(
                     index_elements=["ticker", "interval", "ts"],
-                    set_={"o": o, "h": h, "l": l, "c": c, "v": v},
+                    set_={k: stmt.excluded[k] for k in ("o", "h", "l", "c", "v")},
                 )
                 await session.execute(stmt)
             await session.commit()
 
-    async def daily_closes(self, yf_symbol: str, start: date) -> dict[date, float]:
-        await self.refresh_daily_closes(yf_symbol, start - timedelta(days=7))
+    async def ensure_daily_closes(self, yf_symbol: str, start: date) -> dict[date, float]:
+        """Adjusted closes from `start`, fetching only what the cache lacks. Long
+        histories (risk factors back to 2008) would otherwise be re-downloaded every
+        hour by daily_closes. Auto-adjusted closes are rescaled backwards at each
+        dividend, so the recent refetch is compared with the cache on overlapping
+        days and any drift triggers a full refetch: mixing two adjustment bases
+        would put a fake return at the seam."""
+        async with self._sessions() as session:
+            span = (await session.execute(
+                select(func.min(Candle.ts), func.max(Candle.ts))
+                .where(Candle.ticker == yf_symbol, Candle.interval == YF_INTERVAL)
+            )).one()
+        lo, hi = (span[0].date() if span[0] else None), (span[1].date() if span[1] else None)
+        if lo is None or lo > start + timedelta(days=7):
+            await self.refresh_daily_closes(yf_symbol, start)
+        else:
+            cached = await self._read_daily(yf_symbol, hi - timedelta(days=14))
+            now_ts = utcnow().timestamp()
+            at, _ = self._fetched_at.get(yf_symbol, (0, date.max))
+            if now_ts - at >= 3600:
+                recent_start = hi - timedelta(days=14)
+
+                def fetch():
+                    import yfinance as yf
+
+                    df = yf.Ticker(yf_symbol).history(start=recent_start.isoformat(), auto_adjust=True, interval="1d")
+                    return [(ts.date(), float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"]),
+                             int(r.get("Volume") or 0)) for ts, r in df.iterrows()]
+
+                try:
+                    bars = await asyncio.to_thread(_retry_sync, fetch)
+                except Exception as exc:
+                    log.warning("yfinance closes unavailable for %s (%s); serving cache", yf_symbol, exc)
+                    bars = None
+                if bars is not None:
+                    drift = any(d in cached and abs(c / cached[d] - 1) > 1e-6 for d, _, _, _, c, _ in bars if d < hi)
+                    if drift:
+                        self._fetched_at.pop(yf_symbol, None)
+                        await self.refresh_daily_closes(yf_symbol, lo)
+                    else:
+                        self._fetched_at[yf_symbol] = (now_ts, lo)
+                        await self._store_daily(yf_symbol, bars)
+        return await self._read_daily(yf_symbol, start)
+
+    async def _read_daily(self, yf_symbol: str, start: date) -> dict[date, float]:
         async with self._sessions() as session:
             rows = (
                 await session.execute(
                     select(Candle.ts, Candle.c)
                     .where(Candle.ticker == yf_symbol, Candle.interval == YF_INTERVAL,
-                           Candle.ts >= datetime.combine(start - timedelta(days=7), time.min))
+                           Candle.ts >= datetime.combine(start, time.min))
                     .order_by(Candle.ts)
                 )
             ).all()
         return {ts.date(): c for ts, c in rows if c is not None}
+
+    async def daily_closes(self, yf_symbol: str, start: date) -> dict[date, float]:
+        await self.refresh_daily_closes(yf_symbol, start - timedelta(days=7))
+        return await self._read_daily(yf_symbol, start - timedelta(days=7))

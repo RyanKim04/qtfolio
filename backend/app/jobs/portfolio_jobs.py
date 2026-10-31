@@ -32,7 +32,7 @@ def _last_market_close_utc(now_utc: datetime) -> datetime:
     return candidate.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def make_eod_snapshot(sessions: async_sessionmaker, fx: FxService, yf: YfService) -> Job:
+def make_eod_snapshot(sessions: async_sessionmaker, fx: FxService, yf: YfService, risk=None) -> Job:
     async def run() -> str:
         if not await history.tracked_ids(sessions):
             return "skipped: no tracked accounts"
@@ -47,6 +47,14 @@ def make_eod_snapshot(sessions: async_sessionmaker, fx: FxService, yf: YfService
         for b in await history.get_setting(sessions, "benchmarks", history.DEFAULT_BENCHMARKS):
             await yf.refresh_daily_closes(b, date.today() - timedelta(days=10))
         result = await history.recompute(sessions, yf)
+        if risk is not None:
+            # Warm the risk caches: factor/driver closes (first run fetches from
+            # 2008) and the Dashboard's risk row. Failures leave the pages to
+            # retry on their own request.
+            try:
+                await risk.summary()
+            except Exception as exc:
+                log.warning("risk warm-up failed: %s", exc)
         return f"series: {result}"
 
     def due(last_success, now_utc) -> bool:

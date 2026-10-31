@@ -1,15 +1,16 @@
 # Performance
 
-The Performance page (`/performance`) shows the portfolio's history: a value chart, a benchmark comparison, and a structure (contributions vs gains) view over a selectable range. It also shows stats tiles (TWR, MWR, max drawdown, volatility, best and worst day) and a P&L-by-position table. Today's point is live.
+The Performance page (`/performance`) shows the portfolio's history over a selectable range: one chart card with five modes (value, benchmark comparison, structure, drawdown, rolling risk). Below it, in order: stats tiles (TWR, MWR, max drawdown, volatility, best and worst day), `Risk-adjusted performance`, the `P&L by position` table, `Monthly returns`, and `Trade decisions`. Today's point is live. The risk sections are documented in [risk](./risk.md); this file covers the page shell.
 
 ## Sub-features
 
-- `perf-tabs` switches the chart between the `Value`, `Compare`, and `Structure` tabs.
+- `perf-tabs` switches the chart between `Value`, `Compare`, `Structure`, `Drawdown`, and `Rolling`. The last two read `/api/performance/metrics` and show `Loading…` until it returns.
+- `perf-baseline` is the `Window P&L` / `Lifetime P&L` toggle, shown only in `Value` mode.
 - `perf-range` offers `1M`, `3M`, `6M`, `1Y`, and `ALL`.
-- `perf-stats` shows `TWR`, `MWR since …`, `Max drawdown`, `Volatility (ann.)`, `Best day · <date>`, and `Worst day · <date>`.
+- `perf-stats` shows `TWR`, `MWR since …`, `Max drawdown`, `Volatility (ann.)`, `Best day · <date>`, and `Worst day · <date>`. Hovering or focusing a best/worst day tile opens that session's breakdown.
 - `perf-pnl-table` shows the `P&L by position` table: `Holding` and `Closed` groups (columns `Bought`, `Sold`, `Value now`, `P&L`, plus `Value on <start>` only when the range starts mid-history), each with a `… total` row, then an `Outside positions` group with `Dividends`, `Interest`, `USD cash FX`, `Currency conversion`, `Fees and adjustments` (each only when nonzero), and `Total`.
 - The page opens on `Value` · `ALL` · `Lifetime P&L` every visit (not remembered). Selected segment buttons carry `aria-pressed=true`.
-- `perf-compare` chips start with the benchmarks (default `QQQ`, `SMH`, `SPY`, `XEQT.TO`), then owned tickers.
+- `perf-compare` chips start with the benchmarks (default `QQQ`, `SMH`, `SPY`, `XEQT.TO`), then owned tickers. Only the first benchmark is preselected.
 
 ## How to get to it (user POV)
 
@@ -31,7 +32,8 @@ Steps:
   - FX coverage first: `qtv sql "SELECT min(date) FROM fx_rates"` must be on or before 2026-06-01. If it isn't, every USD amount is valued at the wrong rate. Fail the run and report it; don't just note it.
   - With `r(d)` = the newest `fx_rates` row on or before `d` (from `qtv api GET '/api/performance/attribution?range=all'`): `conversion_cost` = (2000 × r(06-03) − 2800) + (136 − 100 × r(09-01)), `dividends` = 3.32 × r(07-10), `fees` = −25 − 0.50 × r(07-10), `rebates` = 30, `interest` = 1.23. Expect conversion cost < 0 with real June–September rates (the fixture converts at 1.40 / 1.36). Cents can differ by one from floor rounding.
 - **Side effect cross-check.** Run `qtv sql "SELECT count(*), min(date), max(date) FROM series_daily"`. It returns a count of about 150 and `min=2026-06-01`.
-- **Proof.** Take one `step` per tab and range. `console.log` shows only the favicon 404.
+- **Tabs and layout.** `qtv browse perf-tabs .claude/skills/verify-qtfolio/journeys/perf-tabs.mjs` clicks all five modes (each `aria-pressed`, no crash card, `Lifetime P&L` visible only in `Value`) and checks the section order below the chart.
+- **Proof.** Take one `step` per tab (five) and range. `console.log` shows only the favicon 404.
 
 ## Gotchas
 
@@ -39,4 +41,6 @@ Steps:
 - Charts are canvas or SVG. Their ARIA snapshot holds no numbers, so use screenshots plus the stats tiles as the proof.
 - Benchmarks come from Settings (`benchmarks`). On a fresh DB they use the defaults, and Compare needs Yahoo bars for them.
 - `Fees and adjustments` holds an unexplained remainder (`other` in the API), so don't hand-check it. Its tooltip itemizes fees, rebates and the remainder. Only the identities bind it.
-- Labels come from `frontend/src/pages/Performance.tsx`. Fix this map if a run disagrees.
+- Labels come from `frontend/src/pages/Performance.tsx`, `components/PerfRisk.tsx` (risk sections) and `components/ui.tsx` (`Seg`). Fix this map if a run disagrees.
+- `Max drawdown` and `Volatility (ann.)` appear in both the stats strip and `Risk-adjusted performance`. Scope to a card before matching them.
+- `Rolling` needs at least 63 sessions in range; at `1M` / `3M` its three panels render empty, which is not a crash.

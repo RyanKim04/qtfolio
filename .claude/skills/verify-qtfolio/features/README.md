@@ -30,7 +30,8 @@ Each feature file starts with an H1 and a one-paragraph description, then has ex
 ## Features
 
 - [Import activities](./import-activities.md) covers upload preview and commit, the Downloads auto-import, dedup on re-import, and onboarding redirect. Proven by `journeys/import-upload.mjs` and `journeys/import-reject.mjs` (reject + dedup); watcher retry and cross-origin refusal have recipes in the file.
-- [Dashboard](./dashboard.md) covers the stat tiles, holdings table, cash line, allocation donut, CAD/USD toggle, and row → stock page.
-- [Performance](./performance.md) covers the value, compare, and structure charts, the range selector, stats, and P&L by position. P&L numbers are proven by `journeys/pnl-lines.mjs` (table identities to the cent, defaults, XEQT.TO in Compare) plus the hand-checked cash lines and FX coverage check in the file.
-- [Stock detail](./stock-detail.md) covers candles, intervals, overlays and indicator panes, the Position and Levels panels, and symbol search.
-- [TFSA room](./tfsa-room.md) covers the Settings anchor and limits, the Dashboard room card, and recording with warnings.
+- [Dashboard](./dashboard.md) covers the stat tiles, holdings table, cash line, allocation donut, CAD/USD toggle, and row → stock page. Proven by `journeys/dashboard.mjs`. The risk row and Risk/Beta columns are in Risk analytics.
+- [Performance](./performance.md) covers the page shell: the five chart modes, the range selector, stats, and P&L by position. Proven by `journeys/pnl-lines.mjs` (fresh instance) and `journeys/perf-tabs.mjs`. The risk-adjusted panel, Drawdown/Rolling content, monthly returns and trade decisions are in Risk analytics. P&L numbers are proven by `journeys/pnl-lines.mjs` (table identities to the cent, defaults, XEQT.TO in Compare) plus the hand-checked cash lines and FX coverage check in the file.
+- [Risk analytics](./risk.md) covers the Dashboard risk row, the Risk tab (decomposition, correlation, factors, VaR and backtests, stress tests, causal model), and the Performance risk additions. Proven by `journeys/risk.mjs` plus the API identities and hand-checked trade value-add in the file.
+- [Stock detail](./stock-detail.md) covers candles, intervals, overlays and indicator panes, the Position and Levels panels, the RS mini-chart, and symbol search. Proven by `journeys/stock-detail.mjs`.
+- [TFSA room](./tfsa-room.md) covers the Settings anchor and limits, the Dashboard room card, recording with warnings, and delete. Proven by `journeys/tfsa.mjs`.

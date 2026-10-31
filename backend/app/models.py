@@ -100,6 +100,14 @@ class FxRate(Base):
     usdcad_micro: Mapped[int] = mapped_column(Integer)
 
 
+class RiskFreeRate(Base):
+    __tablename__ = "risk_free_daily"
+    # BoC 3-month T-bill mid yield (TB.CDN.90D.MID), INTEGER basis points: the
+    # source publishes two decimals of a percent, so bp are exact.
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    rate_bp: Mapped[int] = mapped_column(Integer)
+
+
 class Candle(Base):
     __tablename__ = "candles"
     # Chart series, so floats are fine here.

@@ -53,6 +53,25 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV plus frozen Q
   (over-contribution, same-year re-contribution). From March on, the card asks to re-anchor on CRA's new
   figure. `test_tfsa.py` covers the engine on a synthetic history. The owner's real history (which
   reproduces CRA's confirmed room) is in the gitignored `test_tfsa_private.py`.
+- **Risk analytics (2026-10-31).** The `services/risk/` package (pure numpy modules plus `service.py`),
+  `api/risk.py`, the `/risk` page, the Dashboard risk row with holdings `Risk`/`Beta` columns, and on
+  Performance `/performance/metrics` (Sharpe/Sortino/Calmar/Omega, PSR and MinTRL, benchmark
+  beta/alpha/TE/IR/capture, rolling, underwater, monthly), `/performance/decisions` (trade
+  counterfactuals with placebo ranks) and `/performance/event` (BSTS event study).
+  - The panel is one source: yfinance auto-adjusted `1d_yf` closes for holdings, 13 ETF-proxy factors
+    and 7 macro drivers, with USD/CAD from Yahoo `CAD=X`, so it isn't mixed with the BoC rates that
+    value the book. History goes back to 2008 for the crisis replays. `YfService.ensure_daily_closes`
+    refetches incrementally and does a full refetch when dividend re-adjustment drifts the overlap.
+  - Covariance options are LW (it shrinks correlations, not raw returns), EWMA 0.94, sample, and
+    factor. The service also computes the Euler decomposition, ENB (PCA and minimum torsion), VaR/ES by five methods
+    (filtered historical is the headline) with Kupiec/Christoffersen tests, historical, conditional,
+    reverse and Monte Carlo stress, and a linear SCM over a prior driver DAG (`causal.PRIOR_PARENTS`)
+    with do() channels, bootstrap CIs, local projections and a PCMCI-lite check.
+  - The credit driver is HYG − 0.45·IEF, duration-hedged. Plain HYG − IEF leaked rate shocks into
+    "credit".
+  - The risk-free rate is the BoC 3-month T-bill (`risk_free_daily`, bp, fetched by `FxService.risk_free`).
+  - `RiskService` caches results in memory per day and book, for at most 15 minutes. `eod_snapshot` warms
+    the Dashboard summary.
 - M5 (analyst, polish): not started. Its empty `analyst_*` tables were dropped 2026-10-30, and the
   disabled Sector allocation tab that pointed at it was removed.
 - Design: Stripe-style light theme, see Design below.
@@ -68,6 +87,13 @@ Local, single-user, read-only portfolio terminal (Wealthsimple CSV plus frozen Q
 - `make install`: backend `uv sync` and frontend `npm install`.
 - `make dev`: backend on 127.0.0.1:8000 and Vite on 127.0.0.1:5173 (proxies `/api`).
 - `make test`: backend pytest.
+
+## Workflow (owner rule, 2026-10-31)
+
+- After a big change, a new feature or any UI build, run `/pstack:maintain-verification-skill` on
+  `.claude/skills/verify-qtfolio` so the feature map, journeys and `qtv` recipes cover what changed.
+- After writing a lot of code or long text (reports, docs, summaries), run `/pstack:unslop` on it before
+  calling it done.
 
 ## Conventions (the non-negotiables)
 

@@ -7,6 +7,7 @@ import { Header } from "./components/Header";
 import { LeftRail } from "./components/LeftRail";
 import { Dashboard } from "./pages/Dashboard";
 import { Performance } from "./pages/Performance";
+import { Risk } from "./pages/Risk";
 import { Settings } from "./pages/Settings";
 import { StockDetail } from "./pages/StockDetail";
 
@@ -87,6 +88,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route index element={<Dashboard />} />
               <Route path="/performance" element={<Performance />} />
+              <Route path="/risk" element={<Risk />} />
               <Route path="/stocks/:ticker" element={<StockDetail />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />

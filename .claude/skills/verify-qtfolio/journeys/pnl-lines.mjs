@@ -1,6 +1,6 @@
 // Feature: performance P&L numbers. Fresh instance → upload the cash-lines fixture (FX conversions,
 // a USD buy, dividend, withholding tax, fee, rebate, interest) → Performance opens on Value · ALL ·
-// Lifetime → every table identity holds to the cent at ALL and 1Y → Compare offers XEQT.TO.
+// Lifetime → every table identity holds to the cent at ALL and 1M → Compare offers XEQT.TO.
 // Live prices move the values but never the identities, so those are asserted exactly.
 // Run: qtv browse pnl-lines .claude/skills/verify-qtfolio/journeys/pnl-lines.mjs
 import { fileURLToPath } from "node:url";

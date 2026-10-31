@@ -1,24 +1,23 @@
 import { Link } from "react-router-dom";
-import { useHoldings, useSummary } from "../api/hooks";
+import { useHoldings, useRiskSummary, useSummary } from "../api/hooks";
 import { useCurrency } from "../App";
 import { AllocationDonut } from "../components/AllocationDonut";
 import { HoldingsTable } from "../components/HoldingsTable";
 import { TfsaRoom } from "../components/TfsaRoom";
+import { RiskRow } from "../components/RiskRow";
+import { StatCard } from "../components/ui";
 import { fmtEtTime, fmtMoney, fmtPct, fmtRelTime, fmtSignedMoney, pnlClass } from "../lib/format";
 
 function Stat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
-  return (
-    <div className="card px-3 py-2">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</div>
-      <div className={`num mt-0.5 text-[17px] font-semibold ${className}`}>{value}</div>
-    </div>
-  );
+  return <StatCard label={label} value={value} className={className} size="lg" />;
 }
 
 export function Dashboard() {
   const { currency } = useCurrency();
   const summary = useSummary(currency);
   const holdings = useHoldings(currency);
+  const risk = useRiskSummary();
+  const riskData = risk.data && !risk.data.empty ? risk.data : null;
 
   if (summary.isError || holdings.isError) {
     const err = (summary.error ?? holdings.error) as Error;
@@ -98,6 +97,23 @@ export function Dashboard() {
           className={pnlClass(s?.twr_ytd)}
         />
       </div>
+      {riskData ? (
+        <div className="space-y-1">
+          <RiskRow r={riskData} />
+          <p className="num text-right text-[11px] text-muted">
+            Risk as of the {riskData.as_of} close, current holdings, CAD.{" "}
+            <Link to="/risk" className="text-accent underline">
+              Full risk analysis
+            </Link>
+          </p>
+        </div>
+      ) : risk.isLoading ? (
+        <p className="text-[12px] text-muted">Computing risk figures…</p>
+      ) : risk.isError ? (
+        <p className="text-[12px] text-muted">
+          Risk figures unavailable: {(risk.error as Error).message}. They need Yahoo price history; reload in a minute.
+        </p>
+      ) : null}
 
       <div className="grid grid-cols-3 items-start gap-4">
         <section className="card col-span-2 overflow-hidden">
@@ -113,7 +129,7 @@ export function Dashboard() {
           {holdings.isLoading ? (
             <p className="p-6 text-center text-[13px] text-muted">Loading…</p>
           ) : holdings.data && holdings.data.rows.length > 0 ? (
-            <HoldingsTable rows={holdings.data.rows} />
+            <HoldingsTable rows={holdings.data.rows} risk={riskData?.holdings} />
           ) : (
             <p className="p-6 text-center text-[13px] text-muted">No open positions.</p>
           )}
