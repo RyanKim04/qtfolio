@@ -21,7 +21,6 @@ import type {
   StockLevels,
   StockPosition,
   Summary,
-  TestResult,
   TfsaRecordResult,
   TfsaSummary,
   TfsaTxnInput,
@@ -80,34 +79,6 @@ export function useSettingsData() {
 function useInvalidateAll() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries();
-}
-
-export function usePasteToken() {
-  const invalidate = useInvalidateAll();
-  return useMutation({
-    mutationFn: (refresh_token: string) =>
-      api<{ ok: boolean; accounts: Account[] }>("/settings/qt-token", {
-        method: "POST",
-        body: JSON.stringify({ refresh_token }),
-      }),
-    onSuccess: invalidate,
-  });
-}
-
-export function useRetireQuestrade() {
-  const invalidate = useInvalidateAll();
-  return useMutation({
-    mutationFn: () => api<{ ok: boolean }>("/settings/qt-retire", { method: "POST" }),
-    onSuccess: invalidate,
-  });
-}
-
-export function useTestConnection() {
-  const invalidate = useInvalidateAll();
-  return useMutation({
-    mutationFn: () => api<TestResult>("/settings/qt-test", { method: "POST" }),
-    onSuccess: invalidate,
-  });
 }
 
 export function useSetAccounts() {
@@ -229,9 +200,8 @@ async function upload<T>(path: string, file: File, commit: boolean): Promise<T> 
   const form = new FormData();
   form.append("file", file);
   form.append("commit", String(commit));
-  const res = await fetch(`/api${path}`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+  // headers: {} drops api()'s JSON Content-Type — the browser sets multipart + boundary.
+  return api<T>(path, { method: "POST", body: form, headers: {} });
 }
 
 export function useImportPreview() {

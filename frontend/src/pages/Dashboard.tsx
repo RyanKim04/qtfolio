@@ -61,9 +61,10 @@ export function Dashboard() {
           <p className="num text-[12px] text-muted">
             Holdings as of Wealthsimple activity through {fresh.activity_through ?? "—"}
             {fresh.last_import_at ? ` · imported ${fmtRelTime(fresh.last_import_at)}` : ""} · traded since?{" "}
-            <Link to="/settings" className="text-accent underline">
-              Import a fresh export
-            </Link>
+            <a href="https://my.wealthsimple.com/app/activity" target="_blank" rel="noreferrer" className="text-accent underline">
+              Download a fresh export
+            </a>{" "}
+            — it imports itself
           </p>
         )}
         {s?.prices_as_of && (
@@ -71,7 +72,7 @@ export function Dashboard() {
             Prices as of {fmtEtTime(s.prices_as_of)}
             {s.price_session ? ` (${s.price_session === "post" ? "after-hours" : "pre-market"})` : ""}
             {s.quotes_live ? (
-              <span className="text-up"> · live, every 15 s</span>
+              <span className="text-up"> · live, streaming</span>
             ) : (
               " · closed until 4:00 a.m. ET pre-market"
             )}

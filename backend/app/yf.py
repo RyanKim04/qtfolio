@@ -51,6 +51,8 @@ _YF_EXCHANGE = {
 YF_BAR_INTERVAL = {"OneDay": "1d", "OneHour": "60m", "FifteenMinutes": "15m", "FiveMinutes": "5m"}
 QUOTE_TTL = 15  # pre-market → after-hours: prices move, so the dashboard ticks every ~15 s
 QUOTE_TTL_CLOSED = 300  # overnight and weekends nothing trades on Yahoo's feed
+SPLITS_TTL = 6 * 3600
+SPLITS_RETRY_S = 300
 
 
 def quotes_live(now: datetime | None = None) -> bool:
@@ -75,8 +77,8 @@ def _retry_sync(fn, attempts: int = 3):
 class YfService:
     def __init__(self, sessions: async_sessionmaker):
         self._sessions = sessions
-        self._fetched_at: dict[str, float] = {}
-        self._splits_cache: dict[str, dict[date, float]] = {}
+        self._fetched_at: dict[str, tuple[float, date]] = {}  # yf symbol → (fetched at, from date)
+        self._splits_cache: dict[str, tuple[float, dict[date, float]]] = {}  # yf symbol → (expires, splits)
         self._bars_at: dict[tuple[str, str], float] = {}
         self._quotes: dict[str, tuple[dict, float]] = {}
         # Polled baselines per symbol: (last regular close, previous close) — the
@@ -313,8 +315,10 @@ class YfService:
 
     async def splits(self, yf_symbol: str) -> dict[date, float]:
         """date -> split factor (2.0 for 2:1 forward, 1/15 for a 1:15 reverse)."""
-        if yf_symbol in self._splits_cache:
-            return self._splits_cache[yf_symbol]
+        now_ts = utcnow().timestamp()
+        cached = self._splits_cache.get(yf_symbol)
+        if cached and now_ts < cached[0]:
+            return cached[1]
 
         def fetch():
             import yfinance as yf
@@ -322,18 +326,26 @@ class YfService:
             s = yf.Ticker(yf_symbol).splits
             return {ts.date(): float(v) for ts, v in s.items()} if s is not None else {}
 
+        # Expires, so a split while the app runs reaches the walk — daily bars
+        # re-adjust on their own refresh, and adjusted closes against unscaled
+        # quantities would misvalue every pre-split day.
         try:
             result = await asyncio.to_thread(_retry_sync, fetch)
+            expires = now_ts + SPLITS_TTL
         except Exception:
-            log.warning("could not fetch splits for %s; assuming none", yf_symbol)
-            result = {}
-        self._splits_cache[yf_symbol] = result
+            # Keep what was known and retry soon: caching {} for good would turn
+            # split adjustment off until restart after one network blip.
+            log.warning("could not fetch splits for %s; using last known", yf_symbol)
+            result = cached[1] if cached else {}
+            expires = now_ts + SPLITS_RETRY_S
+        self._splits_cache[yf_symbol] = (expires, result)
         return result
 
     async def refresh_daily_closes(self, yf_symbol: str, start: date) -> None:
         """Fetch auto-adjusted daily closes into the candles cache (idempotent)."""
         now_ts = utcnow().timestamp()
-        if now_ts - self._fetched_at.get(yf_symbol, 0) < 3600:
+        at, since = self._fetched_at.get(yf_symbol, (0, date.max))
+        if now_ts - at < 3600 and since <= start:  # a recent fetch already covers [start, today]
             return
 
         def fetch():
@@ -351,7 +363,7 @@ class YfService:
         except Exception as exc:
             log.warning("yfinance closes unavailable for %s (%s); serving cache", yf_symbol, exc)
             return
-        self._fetched_at[yf_symbol] = now_ts
+        self._fetched_at[yf_symbol] = (now_ts, start)
         if not bars:
             return
         async with self._sessions() as session:

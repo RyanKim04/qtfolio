@@ -438,7 +438,7 @@ function AttributionTable({ range }: { range: RangeKey }) {
           )}
           {Math.abs(a.other) >= 1 && (
             <tr className="border-b border-border/50 text-muted">
-              <td className="px-2 py-1.5" title="Snapshot reconciliation, conversion spread, and holdings approximated while this week's trades are not yet posted by Questrade — self-corrects when they post">
+              <td className="px-2 py-1.5" title="Snapshot reconciliation, conversion spread, and holdings approximated while recent trades are missing from the latest import — self-corrects once they are imported">
                 Reconciliation
               </td>
               <td className={td} colSpan={4}></td>

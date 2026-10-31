@@ -1,12 +1,5 @@
 export type Currency = "CAD" | "USD";
 
-export interface TokenStatus {
-  status: "absent" | "ok" | "broken";
-  api_server: string | null;
-  access_expires_at: string | null;
-  updated_at: string | null;
-}
-
 export interface JobLastRun {
   started_at: string;
   finished_at: string | null;
@@ -30,19 +23,21 @@ export interface WsImportInfo {
   at: string;
   through: string | null;
   imported: number;
+  file?: string | null;
 }
 
 export interface Health {
-  token: TokenStatus;
-  questrade: { retired: { at: string; closing_snapshot: string | null } | null };
-  wealthsimple: { accounts: number; last_import: WsImportInfo | null };
+  wealthsimple: {
+    accounts: number;
+    last_import: WsImportInfo | null;
+    watch: { dir: string; error: string | null };
+  };
   jobs: JobInfo[];
   progress: Record<string, string>;
   fx: { date: string; usdcad: number } | null;
-  candle_adjustment_regime: string | null;
   series: { start: string; end: string; days: number } | null;
   warnings: ReconWarning[];
-  onboarding: { has_token: boolean; token_ok: boolean; has_accounts: boolean; has_history: boolean };
+  onboarding: { has_accounts: boolean; has_history: boolean };
 }
 
 export interface Summary {
@@ -230,7 +225,7 @@ export interface CompareResult {
 
 export interface ImportPreview {
   phase: "preview";
-  source: "questrade" | "wealthsimple";
+  source: "wealthsimple";
   n_rows: number;
   by_type: Record<string, number>;
   date_range: [string, string] | null;
@@ -246,7 +241,7 @@ export interface ImportResult {
   imported: number;
   duplicates: number;
   errors: string[];
-  recompute: { ok: boolean; days?: number; warnings?: number; reason?: string };
+  recompute: { ok: boolean; days?: number; warnings?: number; reason?: string; skipped?: string };
 }
 
 export interface HoldingRow {
@@ -293,13 +288,6 @@ export interface Account {
 export interface SettingsData {
   settings: Record<string, unknown>;
   accounts: Account[];
-}
-
-export interface TestResult {
-  ok: boolean;
-  latency_ms?: number;
-  accounts?: Account[];
-  error?: string;
 }
 
 export type TfsaTxnType = "contribution" | "withdrawal" | "transfer";

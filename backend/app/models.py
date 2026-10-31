@@ -4,8 +4,8 @@
   quantities = INTEGER micro-units (1e-6) where sub-cent / fractional precision
   matters. Never SQLAlchemy Numeric on SQLite (silent float round-trip).
 - Datetimes stored naive UTC; dates are calendar dates in America/Toronto terms.
-- The whole schema ships in the initial migration; M1 only writes settings,
-  qt_tokens, accounts, symbols, candles, fx_rates, job_runs.
+- Questrade (retired 2026-10-27) survives only as frozen history: its
+  activities, balance/position snapshots and `accounts.broker = 'questrade'`.
 """
 
 from datetime import date, datetime
@@ -24,17 +24,6 @@ class Setting(Base):
     value_json: Mapped[str] = mapped_column(Text)
 
 
-class QtToken(Base):
-    __tablename__ = "qt_tokens"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # single row, id=1
-    refresh_token: Mapped[str | None] = mapped_column(Text)
-    access_token: Mapped[str | None] = mapped_column(Text)
-    api_server: Mapped[str | None] = mapped_column(String)
-    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
-    status: Mapped[str] = mapped_column(String, default="absent")  # absent | ok | broken
-    updated_at: Mapped[datetime] = mapped_column(DateTime)
-
-
 class Account(Base):
     __tablename__ = "accounts"
     # DECISION: the PK keeps its historical name; for Wealthsimple accounts it
@@ -43,7 +32,7 @@ class Account(Base):
     type: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String)
     tracked: Mapped[bool] = mapped_column(default=True)
-    # questrade = live API account (snapshots are ground truth);
+    # questrade = retired account, frozen snapshots are its ground truth;
     # wealthsimple = CSV ledger account (state derived from its activities).
     broker: Mapped[str] = mapped_column(String, default="questrade", server_default="questrade")
 
@@ -51,7 +40,6 @@ class Account(Base):
 class Symbol(Base):
     __tablename__ = "symbols"
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
-    qt_symbol_id: Mapped[int | None] = mapped_column(Integer)
     currency: Mapped[str | None] = mapped_column(String)
     exchange: Mapped[str | None] = mapped_column(String)
     description: Mapped[str | None] = mapped_column(Text)
@@ -150,32 +138,6 @@ class SeriesDaily(Base):
     # Cumulative CAD gain/loss from USD/CAD moves on USD exposure (since inception).
     # Investment P&L = pnl_cad_cents − fx_gain_cad_cents. See series.fx_translation_series.
     fx_gain_cad_cents: Mapped[int | None] = mapped_column(Integer)
-
-
-class AnalystSnapshot(Base):
-    __tablename__ = "analyst_snapshots"
-    ticker: Mapped[str] = mapped_column(String, primary_key=True)
-    date: Mapped[date] = mapped_column(Date, primary_key=True)
-    source: Mapped[str] = mapped_column(String, primary_key=True)
-    target_low_cents: Mapped[int | None] = mapped_column(Integer)
-    target_mean_cents: Mapped[int | None] = mapped_column(Integer)
-    target_high_cents: Mapped[int | None] = mapped_column(Integer)
-    n_analysts: Mapped[int | None] = mapped_column(Integer)
-    rec_mean: Mapped[float | None] = mapped_column(Float)
-    rec_counts_json: Mapped[str | None] = mapped_column(Text)
-
-
-class AnalystAction(Base):
-    __tablename__ = "analyst_actions"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ticker: Mapped[str] = mapped_column(String, index=True)
-    date: Mapped[date | None] = mapped_column(Date)
-    firm: Mapped[str | None] = mapped_column(String)
-    action: Mapped[str | None] = mapped_column(String)
-    from_grade: Mapped[str | None] = mapped_column(String)
-    to_grade: Mapped[str | None] = mapped_column(String)
-    pt_old_cents: Mapped[int | None] = mapped_column(Integer)
-    pt_new_cents: Mapped[int | None] = mapped_column(Integer)
 
 
 class JobRun(Base):

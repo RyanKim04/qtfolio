@@ -8,7 +8,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      "/api": `http://127.0.0.1:${process.env.QTFOLIO_API_PORT ?? "8000"}`,
     },
   },
 });

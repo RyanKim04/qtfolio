@@ -1,17 +1,9 @@
-"""§4.2/§7: multiset-aware dedup — occurrence-indexed hashes, overlapping syncs,
-cross-source (API vs CSV) collapse, and the importer's header mapping."""
+"""§4.2/§7: multiset-aware dedup — occurrence-indexed hashes, overlapping
+imports, and cross-source collapse (the rules every stored hash was built on)."""
 
 from datetime import date
 
-from sqlalchemy import select
-
-from app.models import Activity
-from app.services.activities import (
-    assign_hashes,
-    collapse_duplicate_dividends,
-    upsert_activities,
-)
-from app.services.importer import parse_export
+from app.services.activities import assign_hashes, upsert_activities
 
 
 def div_row(ticker, net=371, desc=None, td=date(2026, 6, 26), txn=date(2026, 6, 26),
@@ -97,48 +89,3 @@ async def test_same_dividend_under_clean_and_registry_symbol_dedups(sessions):
     resync = div_row("QQQM", td=None, txn=date(2026, 6, 26))
     assert await upsert_activities(sessions, assign_hashes([boot])) == 1
     assert await upsert_activities(sessions, assign_hashes([resync])) == 0
-
-
-async def test_collapse_removes_duplicate_and_fixes_mangled_symbol(sessions):
-    """Same-batch dupes (registry key + clean ticker, whitespace-different desc)
-    still land as two rows; the collapse pass removes the dupe, keeps the clean
-    ticker, and strips a mangled leading-dot symbol (.TD -> TD)."""
-    boot = div_row("H082968", desc="INVESCO NASDAQ 100 ETF  CASH DIV  ON 12 SHS REC 06/22/26 PAY 06/26/26")
-    resync = div_row("QQQM", desc="INVESCO NASDAQ 100 ETF CASH DIV ON 12 SHS REC 06/22/26 PAY 06/26/26")
-    td_div = div_row(".TD", net=727, td=date(2024, 7, 31), txn=date(2024, 7, 31),
-                     desc="TORONTO-DOMINION BANK CASH DIV ON 10 SHS REC 07/10/24 PAY 07/31/24")
-    await upsert_activities(sessions, assign_hashes([boot, resync, td_div]))
-
-    assert await collapse_duplicate_dividends(sessions) == 2  # 1 removed + 1 dot-fixed
-    async with sessions() as s:
-        tickers = sorted(r.ticker for r in (await s.execute(select(Activity))).scalars())
-    assert tickers == ["QQQM", "TD"]  # H082968 gone, .TD -> TD
-
-
-async def test_collapse_never_merges_different_stocks_same_amount(sessions):
-    """Two DIFFERENT stocks paying the same amount on the same day must survive —
-    the collapse requires matching normalized descriptions, so it can't merge them."""
-    d = date(2024, 10, 31)
-    jpm = div_row("JPM", net=425, td=d, txn=d, desc="JPMORGAN CHASE & CO CASH DIV ON 4 SHS REC 10/04/24 PAY 10/31/24")
-    qqq = div_row("QQQ", net=425, td=d, txn=d, desc="INVESCO QQQ TR UNIT SER 1 CASH DIV ON 3 SHS REC 09/23/24 PAY 10/31/24")
-    await upsert_activities(sessions, assign_hashes([jpm, qqq]))
-    assert await collapse_duplicate_dividends(sessions) == 0
-    async with sessions() as s:
-        assert (await s.execute(select(Activity))).scalars().all().__len__() == 2
-
-
-def test_importer_maps_questrade_export_headers():
-    csv_data = (
-        "Transaction Date,Settlement Date,Action,Symbol,Description,Quantity,Price,"
-        "Gross Amount,Commission,Net Amount,Currency,Account #,Activity Type,Account Type\n"
-        "2023-05-01,2023-05-03,Buy,MSFT,BOUGHT 5 MSFT,5,300.00,-1500.00,-4.95,-1504.95,USD,111,Trades,Margin\n"
-        "2023-05-02,2023-05-02,CON,,CONTRIBUTION,,,2000.00,,2000.00,CAD,111,Deposits,TFSA\n"
-    ).encode()
-    parsed = parse_export("activities.csv", csv_data)
-    assert parsed["errors"] == []
-    assert len(parsed["rows"]) == 2
-    trade, deposit = parsed["rows"]
-    assert trade["ticker"] == "MSFT" and trade["qty_micro"] == 5_000_000
-    assert trade["net_amount_cents"] == -150495 and trade["currency"] == "USD"
-    assert trade["transaction_date"] == date(2023, 5, 1) and trade["account_id"] == "111"
-    assert deposit["type"] == "deposits" and deposit["net_amount_cents"] == 200000

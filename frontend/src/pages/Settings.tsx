@@ -3,12 +3,9 @@ import {
   useHealth,
   useImportCommit,
   useImportPreview,
-  usePasteToken,
-  useRetireQuestrade,
   useRunJob,
   useSetAccounts,
   useSettingsData,
-  useTestConnection,
   useTfsa,
   useTfsaConfig,
 } from "../api/hooks";
@@ -22,36 +19,6 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       <h2 className="border-b border-border px-3 py-2 text-[13px] font-medium">{title}</h2>
       <div className="p-3">{children}</div>
     </section>
-  );
-}
-
-function Onboarding({ step, onBootstrap, bootstrapping }: { step: 1 | 2 | 3; onBootstrap: () => void; bootstrapping: boolean }) {
-  const steps = [
-    "Paste a Questrade refresh token",
-    "Pick the accounts to track",
-    "Run bootstrap to backfill history",
-  ];
-  return (
-    <div className="rounded-lg border border-accent/30 bg-accent-soft px-4 py-3">
-      <p className="text-[13px] font-medium text-accent">Set up qtfolio</p>
-      <ol className="mt-2 space-y-1 text-[13px]">
-        {steps.map((s, i) => (
-          <li key={s} className={i + 1 === step ? "text-text" : "text-muted"}>
-            <span className="num mr-2">{i + 1 <= step - 1 ? "✓" : `${i + 1}.`}</span>
-            {s}
-            {i === 2 && step === 3 && (
-              <button
-                onClick={onBootstrap}
-                disabled={bootstrapping}
-                className="ml-3 rounded-md bg-accent px-2.5 py-0.5 text-[12px] font-medium text-white hover:bg-accent-deep disabled:opacity-50"
-              >
-                {bootstrapping ? "Running…" : "Run bootstrap"}
-              </button>
-            )}
-          </li>
-        ))}
-      </ol>
-    </div>
   );
 }
 
@@ -70,6 +37,7 @@ function ImportCard() {
   };
 
   const last = health.data?.wealthsimple?.last_import;
+  const watch = health.data?.wealthsimple?.watch;
   const p = preview.data;
   return (
     <Panel title="Wealthsimple — import activities">
@@ -87,19 +55,20 @@ function ImportCard() {
         className={`space-y-2 rounded-md text-[13px] ${dragging ? "outline-2 outline-dashed outline-accent" : ""}`}
       >
         <p className="text-muted">
-          Wealthsimple has no API — holdings move only when a fresh export lands here. In Wealthsimple: Activity →
-          Download activities → pick the account → CSV. Drop the file on this card (or choose it) after you trade.
-          Overlapping exports are safe; duplicates are skipped. Questrade CSV/XLSX exports work here too.
+          Just download the export in Wealthsimple (Activity → Download activities → CSV) — it is picked up from{" "}
+          <span className="num">{watch?.dir ?? "~/Downloads"}</span> within seconds and imported automatically. Overlapping
+          or repeated exports are safe; duplicates are skipped. You can also drop a file here.
         </p>
+        {watch?.error && <p className="text-[12px] text-down">Auto-import paused: {watch.error}</p>}
         <div className="num text-[12px] text-muted">
           {last
-            ? `Last import ${fmtRelTime(last.at)} · activity through ${last.through ?? "—"} · ${last.imported} new rows`
+            ? `Last import ${fmtRelTime(last.at)}${last.file ? ` (${last.file})` : ""} · activity through ${last.through ?? "—"} · ${last.imported} new rows`
             : "No Wealthsimple import yet."}
         </div>
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv"
           onChange={(e) => onSelect(e.target.files?.[0] ?? null)}
           className="block text-[13px] text-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-panel file:px-3 file:py-1.5 file:text-[13px] file:text-text hover:file:bg-bg file:border-solid"
         />
@@ -108,7 +77,7 @@ function ImportCard() {
         {p && !commit.data && (
           <div className="rounded-md border border-border bg-bg p-3">
             <div className="num">
-              {p.source === "wealthsimple" ? "Wealthsimple" : "Questrade"} export · {p.n_rows} rows ·{" "}
+              Wealthsimple export · {p.n_rows} rows ·{" "}
               {p.date_range ? `${p.date_range[0]} → ${p.date_range[1]}` : "no dates"} · accounts{" "}
               {p.accounts.join(", ") || "—"}
             </div>
@@ -137,7 +106,9 @@ function ImportCard() {
         {commit.data && (
           <p className="text-up">
             Imported {commit.data.imported} new rows ({commit.data.duplicates} duplicates skipped).{" "}
-            {commit.data.recompute.ok
+            {commit.data.recompute.skipped
+              ? "Nothing new."
+              : commit.data.recompute.ok
               ? `History recomputed: ${commit.data.recompute.days} days.`
               : `Recompute: ${commit.data.recompute.reason}`}
           </p>
@@ -147,46 +118,25 @@ function ImportCard() {
   );
 }
 
-function ListSetting({
-  label, settingKey, fallback, upper = true, value, dirty, onChange, onSave,
-}: {
+function ListSetting({ label, value, dirty, onChange, onSave }: {
   label: string;
-  settingKey?: string;
-  fallback?: string[];
-  upper?: boolean;
-  value?: string;
-  dirty?: boolean;
-  onChange?: (v: string) => void;
-  onSave?: () => void;
+  value: string;
+  dirty: boolean;
+  onChange: (v: string) => void;
+  onSave: () => void;
 }) {
-  const qc = useQueryClient();
-  const settingsData = useSettingsData();
-  const [local, setLocal] = useState<string | null>(null);
-
-  const controlled = value !== undefined;
-  const stored = settingKey ? ((settingsData.data?.settings[settingKey] as string[]) ?? fallback ?? []) : [];
-  const shown = controlled ? value! : (local ?? stored.join(", "));
-
-  const save = async () => {
-    if (controlled) return onSave?.();
-    const list = shown.split(",").map((s) => (upper ? s.trim().toUpperCase() : s.trim())).filter(Boolean);
-    await api("/settings", { method: "PUT", body: JSON.stringify({ [settingKey!]: list }) });
-    setLocal(null);
-    qc.invalidateQueries();
-  };
-
   return (
     <label className="block">
       <span className="text-[11px] uppercase tracking-wide text-muted">{label} (comma-separated)</span>
       <div className="mt-1 flex gap-2">
         <input
-          value={shown}
-          onChange={(e) => (controlled ? onChange?.(e.target.value) : setLocal(e.target.value))}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
           className="num flex-1 rounded-md border border-border bg-panel px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
         />
         <button
-          onClick={save}
-          disabled={controlled ? !dirty : local === null}
+          onClick={onSave}
+          disabled={!dirty}
           className="rounded-md border border-border bg-panel px-3 py-1.5 text-[13px] text-text hover:bg-bg disabled:opacity-40"
         >
           Save
@@ -288,32 +238,18 @@ function TfsaSettings() {
   );
 }
 
-const statusLabel: Record<string, { text: string; cls: string }> = {
-  ok: { text: "● connected", cls: "text-up" },
-  absent: { text: "no token", cls: "text-muted" },
-  broken: { text: "broken — paste a fresh token", cls: "text-down" },
-};
-
 export function Settings() {
   const health = useHealth();
   const settingsData = useSettingsData();
-  const paste = usePasteToken();
-  const test = useTestConnection();
-  const retire = useRetireQuestrade();
   const setAccounts = useSetAccounts();
   const runJob = useRunJob();
-  const [token, setToken] = useState("");
-  const retired = health.data?.questrade?.retired;
 
   const qc = useQueryClient();
   const [benchmarks, setBenchmarks] = useState<string | null>(null);
 
-  const t = health.data?.token;
   const ob = health.data?.onboarding;
-  const showOnboarding = ob && (!ob.has_token || !ob.has_accounts || !ob.has_history);
   const accounts = settingsData.data?.accounts ?? [];
   const warnings = health.data?.warnings ?? [];
-  const bootstrapping = Boolean(health.data?.progress?.bootstrap) || (runJob.isPending && runJob.variables === "bootstrap");
   const benchmarksValue =
     benchmarks ?? ((settingsData.data?.settings.benchmarks as string[]) ?? ["QQQ", "SMH", "SPY"]).join(", ");
 
@@ -324,16 +260,13 @@ export function Settings() {
     qc.invalidateQueries();
   };
 
-  const expiresIn = t?.access_expires_at ? fmtRelTime(t.access_expires_at) : null;
-
   return (
     <div className="max-w-3xl space-y-4">
-      {showOnboarding && (
-        <Onboarding
-          step={!ob.has_token ? 1 : !ob.has_accounts ? 2 : 3}
-          onBootstrap={() => runJob.mutate("bootstrap")}
-          bootstrapping={bootstrapping}
-        />
+      {ob && !ob.has_history && (
+        <div className="rounded-lg border border-accent/30 bg-accent-soft px-4 py-3 text-[13px]">
+          <p className="font-medium text-accent">Set up qtfolio</p>
+          <p className="mt-1 text-muted">Import a Wealthsimple activities export below — history builds from it.</p>
+        </div>
       )}
 
       {warnings.length > 0 && (
@@ -357,100 +290,9 @@ export function Settings() {
 
       <ImportCard />
 
-      {retired ? (
-        <Panel title="Questrade">
-          <p className="text-[13px] text-muted">
-            <span className="text-text">Retired {retired.at}</span> — history frozen
-            {retired.closing_snapshot ? ` at the closing snapshot of ${retired.closing_snapshot}` : ""}. It stays in
-            every chart and in lifetime P&L; token refresh, sync jobs and the broken-token banner are off. Market
-            data comes from Yahoo Finance.
-          </p>
-        </Panel>
-      ) : (
-      <Panel title="Questrade">
-        <div className="space-y-3 text-[13px]">
-          <div className="grid grid-cols-4 gap-2">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted">Status</div>
-              <div className={statusLabel[t?.status ?? "absent"].cls}>{statusLabel[t?.status ?? "absent"].text}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted">Access expires</div>
-              <div className="num">{t?.status === "ok" ? (expiresIn ?? "—") : "—"}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted">Last refresh</div>
-              <div className="num">{t?.updated_at ? fmtRelTime(t.updated_at) : "—"}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted">API server</div>
-              <div className="num truncate" title={t?.api_server ?? undefined}>
-                {t?.api_server?.replace("https://", "") ?? "—"}
-              </div>
-            </div>
-          </div>
-
-          {t?.status === "broken" && (
-            <div className="rounded-md border border-down/30 bg-down/5 p-2 text-muted">
-              The refresh-token chain was lost. Generate a new manual token: Questrade → API Centre →
-              Personal apps → Generate new token, then paste it below.
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Paste refresh token"
-              className="num flex-1 rounded-md border border-border bg-panel px-2.5 py-1.5 text-[13px] placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-            />
-            <button
-              onClick={() => paste.mutate(token, { onSuccess: () => setToken("") })}
-              disabled={paste.isPending || !token.trim()}
-              className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:bg-accent-deep disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {paste.isPending ? "Connecting…" : "Save token"}
-            </button>
-            <button
-              onClick={() => test.mutate()}
-              disabled={test.isPending || t?.status !== "ok"}
-              className="rounded-md border border-border bg-panel px-3 py-1.5 text-[13px] text-text hover:bg-bg disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {test.isPending ? "Testing…" : "Test connection"}
-            </button>
-          </div>
-          {paste.isError && <p className="text-down">{(paste.error as Error).message}</p>}
-          {paste.isSuccess && <p className="text-up">Token accepted — chain started, accounts synced.</p>}
-          {test.data &&
-            (test.data.ok ? (
-              <p className="text-muted">
-                Connection ok — {test.data.accounts?.length} account(s), <span className="num">{test.data.latency_ms} ms</span>.
-              </p>
-            ) : (
-              <p className="text-down">{test.data.error}</p>
-            ))}
-          <div className="border-t border-border pt-2 text-[12px] text-muted">
-            Moved to another broker?{" "}
-            <button
-              onClick={() => {
-                if (confirm("Freeze Questrade? A closing snapshot is taken now, then Questrade sync stops for good.")) {
-                  retire.mutate();
-                }
-              }}
-              disabled={retire.isPending || t?.status !== "ok"}
-              className="text-accent underline disabled:opacity-40"
-            >
-              {retire.isPending ? "Freezing…" : "Freeze Questrade history"}
-            </button>
-          </div>
-        </div>
-      </Panel>
-      )}
-
       <Panel title="Tracked accounts">
         {accounts.length === 0 ? (
-          <p className="text-[13px] text-muted">No accounts yet — paste a token above and they sync automatically.</p>
+          <p className="text-[13px] text-muted">No accounts yet — import an export above.</p>
         ) : (
           <ul className="space-y-1">
             {accounts.map((a) => (
@@ -500,8 +342,7 @@ export function Settings() {
         </div>
         <p className="mt-2 text-[11px] text-muted">
           Jobs run automatically: overdue jobs execute at every backend start, on their cron schedule while the
-          process is alive, and an hourly catch-up sweep retries anything that failed or was missed. Bootstrap is
-          manual-only.
+          process is alive, and an hourly catch-up sweep retries anything that failed or was missed.
         </p>
       </Panel>
 
@@ -533,16 +374,10 @@ export function Settings() {
       </Panel>
 
       <Panel title="Diagnostics">
-        <div className="grid grid-cols-2 gap-2 text-[13px]">
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted">USDCAD (Bank of Canada)</div>
-            <div className="num">
-              {health.data?.fx ? `${health.data.fx.usdcad.toFixed(4)} · ${health.data.fx.date}` : "not fetched yet"}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted">Candle adjustment regime</div>
-            <div className="num">{health.data?.candle_adjustment_regime ?? "not probed (M2 bootstrap)"}</div>
+        <div className="text-[13px]">
+          <div className="text-[11px] uppercase tracking-wide text-muted">USDCAD (Bank of Canada)</div>
+          <div className="num">
+            {health.data?.fx ? `${health.data.fx.usdcad.toFixed(4)} · ${health.data.fx.date}` : "not fetched yet"}
           </div>
         </div>
       </Panel>

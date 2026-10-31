@@ -115,7 +115,6 @@ class StockService:
         intraday = interval in ("5m", "15m", "1h")
 
         closes = [b["c"] for b in bars]
-        highs = [b["h"] for b in bars]
         lows = [b["l"] for b in bars]
         indicators: dict = {
             "ema20": ind.ema(closes, 20),

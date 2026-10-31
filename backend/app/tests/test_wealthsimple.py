@@ -165,7 +165,6 @@ async def test_recompute_hands_off_from_questrade_to_wealthsimple(sessions):
         s.add(PositionSnapshot(date=d_snap, account_id="Q", ticker="XYZ", qty_micro=10 * M,
                                price_micro=50 * M, market_value_cents=500_00, currency="CAD"))
         await s.commit()
-    await history.set_setting(sessions, "qt_retired", {"at": TODAY.isoformat()})
     await upsert_activities(sessions, assign_hashes([
         row("Q", d_dep, "deposits", "dep", net=1000),
         row("Q", d_buy, "trades", "buy", "XYZ", 10, net=-500),

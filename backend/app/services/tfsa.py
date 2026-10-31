@@ -24,7 +24,6 @@ from ..models import TfsaTransaction
 from . import history
 
 CONTRIBUTION, WITHDRAWAL, TRANSFER = "contribution", "withdrawal", "transfer"
-TYPES = (CONTRIBUTION, WITHDRAWAL, TRANSFER)
 OVER_TAX_MONTHLY = 0.01
 RECONCILE_FROM_MONTH = 3  # CRA My Account shows the new Jan 1 room once issuers have filed (~March)
 

@@ -1,0 +1,5 @@
+effective_date,effective_time,settlement_date,account_id,account_type,activity_type,activity_sub_type,description,direction,symbol,name,currency,quantity,unit_price,commission,net_cash_amount
+2026-06-01,10:00:00,,VERIFY1,TFSA,MoneyMovement,EFT,Deposit,,,,CAD,10000,,,10000
+2026-06-02,10:30:00,2026-06-03,VERIFY1,TFSA,Trade,BUY,"XEQT - iShares Core Equity ETF Portfolio: Bought 100.0000 shares",LONG,XEQT,iShares Core Equity ETF Portfolio,CAD,100,33.00,0,-3300.00
+2026-06-02,10:31:00,2026-06-03,VERIFY1,TFSA,Trade,BUY,"SHOP - Shopify Inc.: Bought 20.0000 shares",LONG,SHOP,Shopify Inc.,CAD,20,150.00,0,-3000.00
+2026-08-03,10:00:00,,VERIFY1,TFSA,MoneyMovement,EFT,Deposit,,,,CAD,500,,,500

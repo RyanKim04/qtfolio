@@ -1,19 +1,17 @@
-"""Orchestration: snapshots → reconstruction → valuation → series_daily.
+"""Orchestration: activities + frozen Questrade snapshots → reconstruction →
+valuation → series_daily.
 
-recompute() is pure-DB (no Questrade calls) so it can rerun cheaply after every
-activities sync or CSV import (§6.7). Network work (activities/candles/FX
-backfill, snapshot taking) lives in the jobs and in full_bootstrap().
+recompute() reads only the DB (plus cached yfinance splits), so it reruns
+cheaply after every CSV import (§6.7). Network work (daily bars, FX) lives in
+the EOD job and the import path.
 """
 
 import json
 import logging
-import re
 from datetime import date
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
-
-from ..config import TZ
 
 from ..models import (
     Account,
@@ -28,10 +26,9 @@ from ..models import (
     Setting,
     Symbol,
 )
-from ..questrade.client import QuestradeClient
 from ..yf import YF_INTERVAL, YfService, to_yf_symbol
 from . import candles as candle_svc
-from .activities import backfill_account, load_activities
+from .activities import load_activities
 from .reconstruction import BACK_ADJUSTED, LedgerState, add_states, match_transfers, walk_backward
 from .series import apply_ground_truth, flows_to_cad, fx_translation_series, twr_index, value_series
 
@@ -49,17 +46,6 @@ async def tracked_ids(sessions: async_sessionmaker) -> list[str]:
 async def tracked_accounts(sessions: async_sessionmaker) -> list[Account]:
     async with sessions() as session:
         return list((await session.execute(select(Account).where(Account.tracked))).scalars())
-
-
-async def qt_account_ids(sessions: async_sessionmaker) -> list[str]:
-    """Tracked Questrade accounts — the only ids the Questrade API may be asked about."""
-    return [a.qt_account_id for a in await tracked_accounts(sessions) if a.broker == QUESTRADE]
-
-
-async def qt_retired(sessions: async_sessionmaker) -> bool:
-    """Owner moved to Wealthsimple (2026-10-27): Questrade history is frozen and
-    every Questrade job, token refresh and banner stands down."""
-    return bool(await get_setting(sessions, "qt_retired", None))
 
 
 async def get_setting(sessions: async_sessionmaker, key: str, default=None):
@@ -81,66 +67,6 @@ async def set_setting(sessions: async_sessionmaker, key: str, value) -> None:
         else:
             row.value_json = json.dumps(value)
         await session.commit()
-
-
-async def take_snapshots(
-    sessions: async_sessionmaker, qt: QuestradeClient, account_ids: list[str], force: bool = False
-) -> date | None:
-    """Daily ground-truth points (§6.8): balances + positions per account, native currency.
-
-    Guard rails (the snapshot IS the day's close in the series, so protect it):
-    - weekends: skip — a Sat/Sun-dated snapshot manufactures a phantom weekend step
-    - after ~16:05 ET: write at most once — the first post-close snapshot (the 17:30
-      job, or the user's first evening refresh) captures ≈the close; later evening
-      refreshes must not overwrite it with drifting after-hours marks.
-    `force=True` (bootstrap) bypasses both — it needs an anchor no matter what.
-    """
-    from datetime import datetime as _dt
-
-    today = date.today()
-    now_et = _dt.now(TZ)
-    after_close = now_et.hour * 60 + now_et.minute >= 16 * 60 + 5
-    if not force:
-        if now_et.weekday() >= 5:
-            log.info("snapshot skipped: weekend (series correctly ends at Friday's close)")
-            return None
-        meta = await get_setting(sessions, "snapshot_meta", None)
-        if after_close and isinstance(meta, dict) and meta.get("date") == today.isoformat() and meta.get("after_close"):
-            log.info("snapshot skipped: today's post-close snapshot already recorded")
-            return None
-    async with sessions() as session:
-        sym_currency = {
-            s.ticker: s.currency for s in (await session.execute(select(Symbol))).scalars()
-        }
-        for acc in account_ids:
-            balances = await qt.balances(acc)
-            for pcb in balances.get("perCurrencyBalances", []):
-                cur = pcb.get("currency")
-                if cur not in ("CAD", "USD"):
-                    continue
-                row = await session.get(BalanceSnapshot, (today, acc, cur))
-                if row is None:
-                    row = BalanceSnapshot(date=today, account_id=acc, currency=cur)
-                    session.add(row)
-                row.cash_cents = round((pcb.get("cash") or 0) * 100)
-                row.market_value_cents = round((pcb.get("marketValue") or 0) * 100)
-                row.total_equity_cents = round((pcb.get("totalEquity") or 0) * 100)
-            positions = await qt.positions(acc)
-            for p in positions:
-                if not (p.get("openQuantity") or 0):
-                    continue
-                t = p["symbol"]
-                row = await session.get(PositionSnapshot, (today, acc, t))
-                if row is None:
-                    row = PositionSnapshot(date=today, account_id=acc, ticker=t)
-                    session.add(row)
-                row.qty_micro = round(p["openQuantity"] * 1_000_000)
-                row.price_micro = round((p.get("currentPrice") or 0) * 1_000_000) or None
-                row.market_value_cents = round((p.get("currentMarketValue") or 0) * 100)
-                row.currency = sym_currency.get(t)
-        await session.commit()
-    await set_setting(sessions, "snapshot_meta", {"date": today.isoformat(), "after_close": after_close})
-    return today
 
 
 async def _fx_micro(sessions: async_sessionmaker) -> dict[date, int]:
@@ -240,7 +166,7 @@ async def recompute(sessions: async_sessionmaker, yf: YfService) -> dict:
     ledger_ids = [a.qt_account_id for a in accounts if a.broker != QUESTRADE]
     candidates = await snapshot_dates(sessions, snap_ids) if snap_ids else []
     if not candidates and not ledger_ids:
-        return {"ok": False, "reason": "no snapshot anchor yet — run bootstrap"}
+        return {"ok": False, "reason": "no history yet — import a Wealthsimple activities export"}
 
     acts, transfer_warnings = match_transfers(activity_dicts(await load_activities(sessions, ids + [""])))
     # DECISION: valuation closes now come from yfinance (split-adjusted), so the
@@ -248,14 +174,10 @@ async def recompute(sessions: async_sessionmaker, yf: YfService) -> dict:
     # result no longer describes the candles in use.
     regime = BACK_ADJUSTED
 
-    # A live Questrade snapshot ends the series each day; ledger accounts and a
-    # retired Questrade don't, so the series runs to today.
-    live_snapshots = bool(snap_ids) and not await qt_retired(sessions)
+    # Questrade (retired 2026-10-27) contributes only its frozen snapshots; the
+    # series runs to today on the ledger accounts.
     last_act = max((a["transaction_date"] for a in acts if a.get("transaction_date")), default=date.today())
-    if ledger_ids or not live_snapshots:
-        series_end = max([date.today(), last_act] + candidates[:1])
-    else:
-        series_end = candidates[0]
+    series_end = max([date.today(), last_act] + candidates[:1])
 
     newest_anchor = await anchor_state(sessions, snap_ids, candidates[0]) if candidates else None
     tickers = sorted({a["ticker"] for a in acts if a["ticker"]} | set(newest_anchor[1] if newest_anchor else {}))
@@ -448,216 +370,6 @@ async def series_coverage(sessions: async_sessionmaker) -> dict | None:
     return {"start": rows[0].isoformat(), "end": rows[-1].isoformat(), "days": len(rows)}
 
 
-# Questrade's API returns some (typically older) trade rows with BOTH `symbol`
-# and `symbolId` empty — only the issuer name in the description. Left alone,
-# those shares get misattributed to a pre-window opening balance, double-counting
-# their purchase money as capital-in. Repair by matching the description's
-# issuer-name prefix to a ticker.
-_STOP_TOKENS = {
-    "COM", "INC", "CORP", "CORPORATION", "CO", "LTD", "PLC", "SA", "THE",
-    "TRUST", "TR", "UNIT", "UNITS", "SER", "SERIES", "CL", "CLASS", "A", "B",
-    "ETF", "FD", "FUND", "NEW", "1", "I", "II",
-}
-
-
-def _desc_key(s: str) -> str:
-    """Issuer-name comparison key: first double-space-delimited chunk, punctuation
-    → space (so AMAZON.COM ≡ AMAZON COM), stop-suffixes dropped, then joined
-    (so MCDONALDS ≡ MCDONALD'S)."""
-    first_chunk = re.split(r"\s{2,}", s.strip())[0]
-    toks = re.sub(r"[^A-Z0-9 ]", " ", first_chunk.upper()).split()
-    return "".join(t for t in toks if t not in _STOP_TOKENS)
-
-
-def _keys_match(a: str, b: str) -> bool:
-    n = min(len(a), len(b))
-    return n >= 4 and (a.startswith(b) or b.startswith(a))
-
-
-async def repair_missing_tickers(sessions: async_sessionmaker, qt: QuestradeClient) -> int:
-    from .activities import collapse_duplicate_dividends, rehash_all
-
-    # First collapse duplicate dividends (same payment under a clean ticker + an
-    # internal registry key) and fix mangled dividend symbols — a separate class of
-    # dirty Questrade data from the symbol-less trades handled below.
-    divs_fixed = await collapse_duplicate_dividends(sessions)
-    async with sessions() as session:
-        rows = list(
-            (
-                await session.execute(
-                    select(Activity).where(
-                        or_(Activity.ticker.is_(None), Activity.ticker == ""),
-                        Activity.qty_micro.is_not(None),
-                        Activity.qty_micro != 0,
-                    )
-                )
-            ).scalars()
-        )
-        if not rows:
-            if divs_fixed:
-                await rehash_all(sessions)  # survivors adopt the symbol-free dividend key
-            return divs_fixed
-        known = [
-            (s.ticker, _desc_key(s.description))
-            for s in (await session.execute(select(Symbol))).scalars()
-            if s.description and not _JUNK_SYMBOL.search(s.ticker)  # junk registry rows never win
-        ]
-
-    repaired = 0
-    cache: dict[str, str | None] = {}
-    for row in rows:
-        if not row.description:
-            continue
-        key = _desc_key(row.description)
-        if key not in cache:
-            matches = {t for t, k in known if _keys_match(key, k)}
-            ticker = matches.pop() if len(matches) == 1 else None
-            if ticker is None and key:
-                ticker = await _search_by_name(sessions, qt, key, row.currency)
-            cache[key] = ticker
-            if cache[key] is None:
-                log.warning("could not resolve ticker for activity description %r", row.description[:60])
-        if cache[key]:
-            async with sessions() as session:
-                db_row = await session.get(Activity, row.id)
-                db_row.ticker = cache[key]
-                await session.commit()
-            repaired += 1
-    if repaired:
-        log.info("repaired %d symbol-less activity rows", repaired)
-    if repaired or divs_fixed:
-        # Hashes were built on the old symbol — recompute so the same activity
-        # arriving from another source/symbol dedups instead of double-counting.
-        await rehash_all(sessions)
-    return repaired + divs_fixed
-
-
-# The export uses internal codes for some rows (N003056, 5BHYPY6.90, …). Real
-# North-American tickers carry no digits, so any digit marks a junk candidate;
-# if description resolution fails the original symbol is kept (plus a warning
-# downstream), never silently dropped.
-_JUNK_SYMBOL = re.compile(r"\d")
-
-
-async def normalize_import_tickers(sessions: async_sessionmaker, qt: QuestradeClient, rows: list[dict]) -> int:
-    """CSV rows: replace missing/junk symbols with real tickers resolved from
-    the description, BEFORE hashing — cross-source dedup depends on both
-    sources producing the same tuple."""
-    async with sessions() as session:
-        known = [
-            (s.ticker, _desc_key(s.description))
-            for s in (await session.execute(select(Symbol))).scalars()
-            if s.description and not _JUNK_SYMBOL.search(s.ticker)
-        ]
-    cache: dict[str, str | None] = {}
-    fixed = 0
-    for row in rows:
-        t = row.get("ticker")
-        if t and not _JUNK_SYMBOL.search(t):
-            continue
-        desc = row.get("description") or ""
-        key = _desc_key(desc)
-        if not key:
-            continue  # keep whatever the export said
-        if key not in cache:
-            matches = {tk for tk, k in known if _keys_match(key, k)}
-            ticker = matches.pop() if len(matches) == 1 else None
-            if ticker is None:
-                ticker = await _search_by_name(sessions, qt, key, row.get("currency"))
-            cache[key] = ticker
-        if cache[key] is not None and cache[key] != t:
-            row["ticker"] = cache[key]
-            fixed += 1
-    if fixed:
-        log.info("normalized %d import rows' symbols", fixed)
-    return fixed
-
-
-async def _search_by_name(
-    sessions: async_sessionmaker, qt: QuestradeClient, key: str, currency: str | None = None
-) -> str | None:
-    """Questrade's search matches TICKER prefixes, not names — so probe with
-    shrinking prefixes of the name key (MCDONALDS → MCDON → MCDO → MCD hits)
-    and validate every candidate against the description key. Ambiguity between
-    cross-listings is broken by the row's currency."""
-    candidates: dict[str, dict] = {}
-    for n in (len(key), 5, 4, 3):
-        if n > len(key):
-            continue
-        try:
-            results = await qt.symbol_search(key[:n])
-        except Exception as exc:
-            log.warning("symbol search for %r failed: %s", key[:n], exc)
-            continue
-        candidates = {
-            r["symbol"]: r for r in results
-            if r.get("description") and _keys_match(_desc_key(r["description"]), key)
-            # Equities only: name search also surfaces bonds/notes (e.g. the
-            # "MCDONALDS CORP MEDIUM TERM NOTE" 5BHYPY6.90) which must never
-            # win a match for an equity trade row.
-            and r.get("securityType", "Stock") == "Stock"
-        }
-        if len(candidates) > 1 and currency:
-            narrowed = {s: r for s, r in candidates.items() if r.get("currency") == currency}
-            if narrowed:
-                candidates = narrowed
-        if candidates:
-            break
-    if len(candidates) != 1:
-        return None
-    info = next(iter(candidates.values()))
-    async with sessions() as session:
-        row = await session.get(Symbol, info["symbol"])
-        if row is None:
-            row = Symbol(ticker=info["symbol"])
-            session.add(row)
-        row.qt_symbol_id = info.get("symbolId")
-        row.currency = info.get("currency")
-        row.exchange = info.get("listingExchange")
-        row.description = info.get("description")
-        await session.commit()
-    return info["symbol"]
-
-
-async def resolve_symbols(sessions: async_sessionmaker, qt: QuestradeClient, tickers: list[str]) -> None:
-    """Make sure every historical ticker has currency/exchange/symbol_id cached."""
-    async with sessions() as session:
-        known = {s.ticker for s in (await session.execute(select(Symbol))).scalars() if s.currency}
-    for t in sorted(set(tickers) - known):
-        try:
-            matches = await qt.symbol_search(t)
-        except Exception as exc:
-            log.warning("symbol search failed for %s: %s", t, exc)
-            continue
-        info = next((m for m in matches if m.get("symbol") == t), None)
-        if not info:
-            continue
-        async with sessions() as session:
-            row = await session.get(Symbol, t)
-            if row is None:
-                row = Symbol(ticker=t)
-                session.add(row)
-            row.qt_symbol_id = info.get("symbolId")
-            row.currency = info.get("currency")
-            row.exchange = info.get("listingExchange")
-            row.description = info.get("description")
-            await session.commit()
-
-
-async def refresh_reference_data(sessions: async_sessionmaker, qt: QuestradeClient, yf: YfService) -> None:
-    """Make the symbol registry and daily-candle coverage catch up with
-    whatever tickers now exist in `activities` (new tickers arrive via CSV
-    imports and repairs, not just bootstrap)."""
-    async with sessions() as session:
-        act_tickers = sorted({t for (t,) in (await session.execute(select(Activity.ticker).distinct())) if t})
-    if not act_tickers:
-        return
-    if not await qt_retired(sessions):
-        await resolve_symbols(sessions, qt, act_tickers)
-    await ensure_symbols_yf(sessions, yf, act_tickers)
-    await refresh_market_data(sessions, yf)
-
-
 async def first_activity_date(sessions: async_sessionmaker) -> date | None:
     async with sessions() as session:
         return (
@@ -717,103 +429,3 @@ async def refresh_market_data(sessions: async_sessionmaker, yf: YfService, ticke
     for t in tickers:
         s = sym_rows.get(t)
         await yf.refresh_bars(t, to_yf_symbol(t, s.exchange if s else None), "OneDay", start)
-
-
-async def retire_questrade(sessions: async_sessionmaker, qt: QuestradeClient) -> dict:
-    """Freeze Questrade after the move to Wealthsimple. One last forced snapshot
-    while the token still works — the live (zero) balances become the closing
-    ground truth the reconstruction anchors on, so the frozen history ends
-    exactly at zero instead of carrying old activity-vs-snapshot noise into
-    today. Closed accounts are marked; Questrade jobs, token refreshes and the
-    broken-token banner then stand down for good."""
-    ids = await qt_account_ids(sessions)
-    closing = None
-    try:
-        active = {str(a.get("number")) for a in await qt.accounts()}
-        async with sessions() as session:
-            for acc in (await session.execute(select(Account).where(Account.broker == QUESTRADE))).scalars():
-                acc.status = "Active" if acc.qt_account_id in active else "Closed"
-            await session.commit()
-        closing = await take_snapshots(sessions, qt, ids, force=True)
-    except Exception as exc:
-        log.warning("no closing Questrade snapshot (%s); history stays anchored at the last one", exc)
-    value = {"at": date.today().isoformat(), "closing_snapshot": closing.isoformat() if closing else None}
-    await set_setting(sessions, "qt_retired", value)
-    return value
-
-
-async def full_bootstrap(sessions, qt: QuestradeClient, fx, yf: YfService, progress=None) -> str:
-    """Manual bootstrap (§13): regime check → backfills → snapshot anchor → recompute."""
-    from .regime import detect_regime
-
-    def report(msg: str):
-        log.info("bootstrap: %s", msg)
-        if progress:
-            progress(msg)
-
-    if await qt_retired(sessions):
-        return "skipped: Questrade is retired — Wealthsimple history comes from the CSV import"
-    ids = await qt_account_ids(sessions)
-    if not ids:
-        return "no tracked accounts — pick accounts in Settings first"
-
-    report("checking candle adjustment regime")
-    regime = await detect_regime(sessions, qt, yf)
-
-    report("backfilling activities")
-    earliest = date.today()
-    total_new = 0
-    for acc in ids:
-        r = await backfill_account(qt, sessions, acc, progress=report)
-        total_new += r["new"]
-        if r["earliest"]:
-            earliest = min(earliest, r["earliest"])
-
-    async with sessions() as session:
-        first_act = (
-            await session.execute(select(Activity.transaction_date).order_by(Activity.transaction_date).limit(1))
-        ).scalar_one_or_none()
-    if first_act:
-        earliest = min(earliest, first_act)
-
-    report(f"backfilling FX from {earliest}")
-    await fx.backfill(earliest)
-
-    async with sessions() as session:
-        act_tickers = sorted({t for (t,) in (await session.execute(select(Activity.ticker).distinct())) if t})
-    report(f"resolving {len(act_tickers)} symbols")
-    await resolve_symbols(sessions, qt, act_tickers)
-
-    report("repairing symbol-less trade rows")
-    repaired = await repair_missing_tickers(sessions, qt)
-    if repaired:
-        async with sessions() as session:
-            act_tickers = sorted({t for (t,) in (await session.execute(select(Activity.ticker).distinct())) if t})
-        await resolve_symbols(sessions, qt, act_tickers)
-
-    report("backfilling daily candles")
-    async with sessions() as session:
-        sym_rows = list((await session.execute(select(Symbol).where(Symbol.ticker.in_(act_tickers)))).scalars())
-    for s in sym_rows:
-        if s.qt_symbol_id:
-            try:
-                await candle_svc.backfill_daily(qt, sessions, s.ticker, s.qt_symbol_id, earliest)
-            except Exception as exc:
-                log.warning("candle backfill failed for %s: %s", s.ticker, exc)
-
-    benchmarks = await get_setting(sessions, "benchmarks", DEFAULT_BENCHMARKS)
-    report("fetching benchmark history")
-    for b in benchmarks:
-        await yf.refresh_daily_closes(b, earliest)
-
-    report("taking ground-truth snapshot")
-    await take_snapshots(sessions, qt, ids, force=True)
-
-    report("reconstructing history")
-    result = await recompute(sessions, yf)
-    return (
-        f"regime={regime}; {total_new} new activities; series {result.get('start')}→{result.get('end')} "
-        f"({result.get('days', 0)} days, {result.get('warnings', 0)} warnings)"
-        if result.get("ok")
-        else f"regime={regime}; {total_new} new activities; recompute failed: {result.get('reason')}"
-    )

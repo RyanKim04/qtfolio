@@ -1,119 +1,20 @@
-"""CSV/xlsx activities import — SPEC.md §4.3. Load-bearing, not a fallback:
-everything the reconstruction knows about the pre-API era comes from here.
+"""Activities import — SPEC.md §4.3, two-phase: parse+preview first, commit on
+confirmation. Rows land in `activities` through the multiset dedup, so
+re-importing an overlapping export is safe. Parsing is per source
+(services/wealthsimple.py); exports arrive by upload or from the Downloads
+watcher (services/ws_watch.py), both through import_ws_export."""
 
-Two-phase: parse+preview first, commit on confirmation. Rows land in the same
-`activities` table through the same multiset dedup as the API sync, so
-re-importing or overlapping the API window is safe.
-"""
-
-import csv
-import io
-import json
-import logging
-import re
+import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from .activities import assign_hashes, parse_date, parse_money_cents, parse_qty_micro, upsert_activities
+from ..config import utcnow
+from ..models import Account
+from . import history, wealthsimple
+from .activities import assign_hashes, upsert_activities
 
-log = logging.getLogger(__name__)
-
-# Fuzzy header → field mapping for Questrade's web-app export.
-HEADER_MAP = {
-    "transaction date": "transaction_date",
-    "trade date": "trade_date",
-    "settlement date": "settlement_date",
-    "action": "action",
-    "symbol": "ticker",
-    "description": "description",
-    "quantity": "qty",
-    "price": "price",
-    "gross amount": "gross",
-    "commission": "commission",
-    "net amount": "net",
-    "currency": "currency",
-    "account #": "account_id",
-    "account number": "account_id",
-    "activity type": "type",
-    "account type": "account_type",
-}
-
-
-def _match_header(h: str) -> str | None:
-    key = re.sub(r"\s+", " ", str(h or "").strip().lower())
-    if key in HEADER_MAP:
-        return HEADER_MAP[key]
-    for candidate, field in HEADER_MAP.items():
-        if candidate in key:
-            return field
-    return None
-
-
-def _read_table(filename: str, content: bytes) -> list[list]:
-    if filename.lower().endswith((".xlsx", ".xls")):
-        from openpyxl import load_workbook
-
-        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        return [[c for c in row] for row in ws.iter_rows(values_only=True)]
-    text = content.decode("utf-8-sig", errors="replace")
-    return [row for row in csv.reader(io.StringIO(text))]
-
-
-def parse_export(filename: str, content: bytes) -> dict:
-    """Parse the export into normalized activity dicts + a mapping report."""
-    table = _read_table(filename, content)
-    if not table:
-        return {"rows": [], "errors": ["file is empty"], "header_map": {}, "unmapped_headers": []}
-
-    # Find the header row (the export sometimes has preamble lines).
-    header_idx, fields = None, None
-    for i, row in enumerate(table[:10]):
-        mapped = [_match_header(c) for c in row]
-        if sum(1 for m in mapped if m) >= 4:
-            header_idx, fields = i, mapped
-            break
-    if header_idx is None:
-        return {"rows": [], "errors": ["could not locate a header row"], "header_map": {}, "unmapped_headers": []}
-
-    header_map = {str(table[header_idx][i]): f for i, f in enumerate(fields) if f}
-    unmapped = [str(c) for i, c in enumerate(table[header_idx]) if c and not fields[i]]
-
-    rows, errors = [], []
-    for line_no, raw in enumerate(table[header_idx + 1 :], start=header_idx + 2):
-        if not any(c not in (None, "") for c in raw):
-            continue
-        rec = {}
-        for i, field in enumerate(fields):
-            if field and i < len(raw):
-                rec[field] = raw[i]
-        txn_date = parse_date(rec.get("transaction_date"))
-        if txn_date is None:
-            errors.append(f"line {line_no}: unparseable transaction date {rec.get('transaction_date')!r}")
-            continue
-        price_micro = parse_qty_micro(rec.get("price"))  # same 1e-6 scaling as qty
-        ticker = str(rec.get("ticker") or "").strip().upper() or None
-        rows.append({
-            "account_id": str(rec.get("account_id") or "").strip(),
-            "trade_date": parse_date(rec.get("trade_date")),
-            "transaction_date": txn_date,
-            "settlement_date": parse_date(rec.get("settlement_date")),
-            "type": re.sub(r"\s+", " ", str(rec.get("type") or "").strip()).lower(),
-            "action": re.sub(r"\s+", " ", str(rec.get("action") or "").strip()).lower(),
-            "ticker": ticker,
-            "qty_micro": parse_qty_micro(rec.get("qty")),
-            "price_micro": price_micro if price_micro else None,
-            "gross_amount_cents": parse_money_cents(rec.get("gross")),
-            "commission_cents": parse_money_cents(rec.get("commission")),
-            "net_amount_cents": parse_money_cents(rec.get("net")),
-            "currency": str(rec.get("currency") or "").strip().upper() or None,
-            "description": str(rec.get("description") or "").strip() or None,
-            "raw_json": json.dumps({"source": "csv_import", "line": line_no}),
-        })
-    missing_account = sum(1 for r in rows if not r["account_id"])
-    if missing_account:
-        errors.append(f"{missing_account} rows have no account number and will import under account ''")
-    return {"rows": rows, "errors": errors, "header_map": header_map, "unmapped_headers": unmapped}
+# Upload and watcher may land the same export at once; one commit+recompute at a time.
+_lock = asyncio.Lock()
 
 
 def preview_report(parsed: dict) -> dict:
@@ -141,3 +42,42 @@ async def commit_import(sessions: async_sessionmaker, parsed: dict) -> dict:
     rows = assign_hashes(parsed["rows"])
     new = await upsert_activities(sessions, rows)
     return {"imported": new, "duplicates": len(rows) - new, "errors": parsed["errors"]}
+
+
+async def import_ws_export(state, content: bytes, *, commit: bool, source: str | None = None) -> dict:
+    """WS rows carry clean symbols (no Questrade-style junk codes), so no
+    description repair — just ledger accounts, Yahoo symbol registry, bars."""
+    parsed = wealthsimple.parse_ws_export(content)
+    if not commit:
+        return {"phase": "preview", "source": wealthsimple.BROKER, **preview_report(parsed)}
+    async with _lock:
+        async with state.sessions() as session:
+            for acc_id, acc_type in parsed["accounts"].items():
+                row = await session.get(Account, acc_id)
+                if row is None:
+                    row = Account(qt_account_id=acc_id, tracked=True, broker=wealthsimple.BROKER, status="Active")
+                    session.add(row)
+                row.type = acc_type or row.type
+            await session.commit()
+        result = await commit_import(state.sessions, parsed)
+        if result["imported"]:
+            tickers = sorted({r["ticker"] for r in parsed["rows"] if r["ticker"]})
+            unresolved = await history.ensure_symbols_yf(state.sessions, state.yf, tickers)
+            await history.refresh_market_data(state.sessions, state.yf)
+            recompute = await history.recompute(state.sessions, state.yf)
+            if unresolved:
+                result["errors"] = result["errors"] + [f"could not resolve on Yahoo: {', '.join(unresolved)}"]
+        else:
+            # A re-download with nothing new (the common case) changes no state.
+            recompute = {"ok": True, "days": 0, "skipped": "no new rows"}
+    prev = await history.get_setting(state.sessions, "ws_last_import", None) or {}
+    # An older export picked up later must not move "activity through" backwards.
+    through = max(filter(None, [prev.get("through"), *(r["transaction_date"].isoformat() for r in parsed["rows"])]),
+                  default=None)
+    await history.set_setting(state.sessions, "ws_last_import", {
+        "at": utcnow().isoformat(),
+        "through": through,
+        "imported": result["imported"],
+        "file": source,
+    })
+    return {"phase": "committed", "source": wealthsimple.BROKER, **result, "recompute": recompute}
